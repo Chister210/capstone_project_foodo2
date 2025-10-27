@@ -6,7 +6,7 @@ import 'package:get/get.dart';
 import '../models/donation_model.dart';
 import '../models/user_model.dart';
 import '../services/location_tracking_service.dart';
-import '../services/notification_service.dart';
+// Removed old notification service import
 import '../services/donation_service.dart';
 import 'dart:async';
 
@@ -25,7 +25,7 @@ class TrackingScreen extends StatefulWidget {
 class _TrackingScreenState extends State<TrackingScreen> {
   late GoogleMapController mapController;
   final LocationTrackingService _locationService = LocationTrackingService();
-  final NotificationService _notificationService = NotificationService();
+  // Removed legacy notification service field
   final DonationService _donationService = DonationService();
   
   DonationModel? _donation;

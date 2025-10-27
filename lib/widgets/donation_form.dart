@@ -7,6 +7,8 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../services/donation_service.dart';
+import '../models/food_category.dart';
+import '../models/donation_specification.dart';
 import 'food_safety_guideline.dart';
 
 class DonationForm extends StatefulWidget {
@@ -24,13 +26,17 @@ class _DonationFormState extends State<DonationForm> {
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _addressController = TextEditingController();
-  final _marketAddressController = TextEditingController();
   final _expirationDateController = TextEditingController();
   final _preparationDateController = TextEditingController();
   final _ingredientsController = TextEditingController();
   final _allergensController = TextEditingController();
+  final _quantityController = TextEditingController();
+  final _maxRecipientsController = TextEditingController();
   final DonationService _donationService = DonationService();
   final ImagePicker _imagePicker = ImagePicker();
+
+  // Controller for adding custom allergen
+  final TextEditingController _customAllergenController = TextEditingController();
 
   File? _selectedImage;
   DateTime? _selectedPickupTime;
@@ -39,9 +45,11 @@ class _DonationFormState extends State<DonationForm> {
   String _deliveryType = 'pickup';
   String _foodQuality = 'fresh';
   String _foodTemperature = 'hot'; // 'hot', 'cold', 'room_temp'
+  String? _selectedFoodCategory;
+  String? _selectedSpecification;
   bool _isLoading = false;
   bool _safetyGuidelinesCompleted = false;
-  LatLng? _selectedMarketLocation;
+  // market location removed from form
 
   // Allergens list
   final List<String> _commonAllergens = [
@@ -61,7 +69,7 @@ class _DonationFormState extends State<DonationForm> {
   @override
   void initState() {
     super.initState();
-    _selectedMarketLocation = widget.marketLocation;
+    // market location handling removed
   }
 
   @override
@@ -69,11 +77,11 @@ class _DonationFormState extends State<DonationForm> {
     _titleController.dispose();
     _descriptionController.dispose();
     _addressController.dispose();
-    _marketAddressController.dispose();
     _expirationDateController.dispose();
     _preparationDateController.dispose();
     _ingredientsController.dispose();
     _allergensController.dispose();
+    _customAllergenController.dispose();
     super.dispose();
   }
 
@@ -362,6 +370,29 @@ Future<void> _selectPickupTime() async {
     }
   }
 
+  // Adds a custom allergen from the input field into the selected allergens list.
+  void _addCustomAllergen() {
+    final raw = _customAllergenController.text.trim();
+    if (raw.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter an allergen to add'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    final normalized = raw[0].toUpperCase() + raw.substring(1);
+    if (_selectedAllergens.contains(normalized)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Allergen already added'), backgroundColor: Colors.grey),
+      );
+    } else {
+      setState(() {
+        _selectedAllergens.add(normalized);
+      });
+    }
+    _customAllergenController.clear();
+  }
+
   void _toggleAllergen(String allergen) {
     setState(() {
       if (_selectedAllergens.contains(allergen)) {
@@ -517,6 +548,21 @@ void _showSafetyGuidelines() {
       _showSafetyGuidelines();
       return;
     }
+    // Require at least one allergen to be specified
+    if (_selectedAllergens.isEmpty) {
+      // show dialog prompting user to add at least one allergen
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Allergen information required'),
+          content: const Text('Please add at least one allergen or a custom allergen so recipients can be informed.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
+          ],
+        ),
+      );
+      return;
+    }
     if (_selectedImage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select an image')),
@@ -548,12 +594,12 @@ void _showSafetyGuidelines() {
         pickupTime: _selectedPickupTime!,
         deliveryType: _deliveryType,
         address: _deliveryType == 'delivery' ? _addressController.text.trim() : null,
-        marketLocation: _selectedMarketLocation != null 
-            ? GeoPoint(_selectedMarketLocation!.latitude, _selectedMarketLocation!.longitude)
-            : null,
-        marketAddress: _marketAddressController.text.trim().isEmpty ? null : _marketAddressController.text.trim(),
+        // market location/address removed from donation form
         foodType: _getFoodTypeFromTitle(),
-        quantity: _estimateQuantity(),
+        foodCategory: _selectedFoodCategory,
+        quantity: _quantityController.text.trim(),
+        specification: _selectedSpecification,
+        maxRecipients: int.tryParse(_maxRecipientsController.text.trim()),
         allergens: _selectedAllergens.isNotEmpty ? _selectedAllergens : null,
       );
 
@@ -659,12 +705,11 @@ void _showSafetyGuidelines() {
       _foodTemperature = 'hot';
       _safetyGuidelinesCompleted = false;
       _selectedAllergens.clear();
-      _selectedMarketLocation = null;
+      // market location state reset removed
     });
     _titleController.clear();
     _descriptionController.clear();
     _addressController.clear();
-    _marketAddressController.clear();
     _expirationDateController.clear();
     _preparationDateController.clear();
     _ingredientsController.clear();
@@ -1236,6 +1281,11 @@ void _showSafetyGuidelines() {
     required bool isSelected,
     required VoidCallback onTap,
   }) {
+    final width = MediaQuery.of(context).size.width;
+    // responsive sizes
+    final double titleSize = width < 360 ? 11 : (width < 420 ? 12 : 14);
+    final double subtitleSize = width < 360 ? 9 : (width < 420 ? 10 : 12);
+
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -1260,14 +1310,14 @@ void _showSafetyGuidelines() {
               style: TextStyle(
                 color: isSelected ? const Color(0xFF22c55e) : Colors.black,
                 fontWeight: FontWeight.bold,
-                fontSize: 12,
+                fontSize: titleSize,
               ),
             ),
             Text(
               subtitle,
               style: TextStyle(
                 color: isSelected ? const Color(0xFF22c55e) : Colors.grey,
-                fontSize: 10,
+                fontSize: subtitleSize,
               ),
               textAlign: TextAlign.center,
             ),
@@ -1338,6 +1388,216 @@ void _showSafetyGuidelines() {
     );
   }
 
+  Widget _buildFoodCategorySection() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Food Category',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Select the category that best describes your food donation',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _selectedFoodCategory,
+            decoration: InputDecoration(
+              hintText: 'Select food category',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Color(0xFF22c55e)),
+              ),
+              contentPadding: const EdgeInsets.all(16),
+            ),
+            items: FoodCategory.categories.map((category) {
+              return DropdownMenuItem<String>(
+                value: category.id,
+                child: Row(
+                  children: [
+                    Text(category.icon, style: const TextStyle(fontSize: 20)),
+                    const SizedBox(width: 12),
+                    Text(category.name),
+                  ],
+                ),
+              );
+            }).toList(),
+            onChanged: (value) => setState(() => _selectedFoodCategory = value),
+            validator: (value) => value == null ? 'Please select a food category' : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDonationSpecificationSection() {
+  return Container(
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: Colors.grey.withOpacity(0.2)),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.05),
+          blurRadius: 10,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Donation Specification',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.black,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Specify how the food will be distributed to recipients',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.black54,
+          ),
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          value: _selectedSpecification,
+          isExpanded: true,
+          itemHeight: 50,
+          menuMaxHeight: 250,
+          decoration: InputDecoration(
+            hintText: 'Select specification',
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFF22c55e)),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          ),
+          items: DonationSpecification.specifications.map((spec) {
+            return DropdownMenuItem<String>(
+              value: spec.id,
+              child: SizedBox(
+                height: 40,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    spec.name, // Only show the name, no description
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+          onChanged: (value) => setState(() => _selectedSpecification = value),
+          validator: (value) => value == null ? 'Please select a specification' : null,
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                controller: _quantityController,
+                decoration: InputDecoration(
+                  labelText: 'Quantity',
+                  hintText: 'e.g., 10 pieces, 2kg, 5 packs',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFF22c55e)),
+                  ),
+                  contentPadding: const EdgeInsets.all(16),
+                ),
+                validator: (value) => value?.isEmpty == true ? 'Please enter quantity' : null,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: TextFormField(
+                controller: _maxRecipientsController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Max Recipients',
+                  hintText: 'e.g., 5',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFF22c55e)),
+                  ),
+                  contentPadding: const EdgeInsets.all(16),
+                ),
+                validator: (value) => value?.isEmpty == true ? 'Please enter max recipients' : null,
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
   Widget _buildAllergensSection() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1373,6 +1633,7 @@ void _showSafetyGuidelines() {
             ),
           ),
           const SizedBox(height: 12),
+          // Common allergen chips
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -1390,6 +1651,30 @@ void _showSafetyGuidelines() {
                 ),
               );
             }).toList(),
+          ),
+          const SizedBox(height: 12),
+          // Custom allergen input
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customAllergenController,
+                  decoration: InputDecoration(
+                    hintText: 'Add custom allergen (e.g., "Mustard")',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _addCustomAllergen(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _addCustomAllergen,
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF22c55e)),
+                child: const Text('Add'),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           if (_selectedAllergens.isNotEmpty)
@@ -1767,6 +2052,14 @@ void _showSafetyGuidelines() {
                   _buildAllergensSection(),
                   const SizedBox(height: 16),
                   
+                  // Food Category Section
+                  _buildFoodCategorySection(),
+                  const SizedBox(height: 16),
+                  
+                  // Donation Specification Section
+                  _buildDonationSpecificationSection(),
+                  const SizedBox(height: 16),
+                  
                   // Pickup Time
                   _buildPickupTimeSection(),
                   const SizedBox(height: 16),
@@ -1789,78 +2082,6 @@ void _showSafetyGuidelines() {
                       },
                     ),
                     const SizedBox(height: 16),
-                  ],
-                  
-                  // Market Location Section
-                  if (_deliveryType == 'pickup') ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: _selectedMarketLocation != null ? const Color(0xFF22c55e) : Colors.grey.withOpacity(0.3),
-                          width: 2,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 10,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.location_on_rounded,
-                                color: _selectedMarketLocation != null ? const Color(0xFF22c55e) : Colors.grey,
-                                size: 24,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  'Market Location',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: _selectedMarketLocation != null ? const Color(0xFF22c55e) : Colors.black,
-                                  ),
-                                ),
-                              ),
-                              if (_selectedMarketLocation != null)
-                                const Icon(
-                                  Icons.check_circle_rounded,
-                                  color: Color(0xFF22c55e),
-                                  size: 24,
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            _selectedMarketLocation != null
-                                ? 'Location selected: ${_selectedMarketLocation!.latitude.toStringAsFixed(6)}, ${_selectedMarketLocation!.longitude.toStringAsFixed(6)}'
-                                : 'Select your market location on the map',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: _selectedMarketLocation != null ? const Color(0xFF22c55e) : Colors.black54,
-                              height: 1.4,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildTextField(
-                            controller: _marketAddressController,
-                            label: 'Market Address (Optional)',
-                            hint: 'e.g., Davao City Public Market, Agdao',
-                            validator: null,
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                   
                   // Submit Button - ENHANCED

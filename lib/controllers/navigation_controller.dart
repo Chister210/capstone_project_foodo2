@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:capstone_project/screens/map_screen.dart';
-import 'package:capstone_project/screens/profile_screen.dart';
 
 class NavigationController extends GetxController {
   final RxInt currentIndex = 0.obs;
-  final PageController pageController = PageController();
+  late PageController pageController;
+
+  @override
+  void onInit() {
+    super.onInit();
+    pageController = PageController(initialPage: 0);
+  }
 
   void changePage(int index) {
     currentIndex.value = index;
@@ -14,6 +18,11 @@ class NavigationController extends GetxController {
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
     );
+  }
+
+  void goToPage(int index) {
+    currentIndex.value = index;
+    pageController.jumpToPage(index);
   }
 
   @override

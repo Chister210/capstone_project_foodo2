@@ -7,8 +7,8 @@ plugins {
 
 android {
     namespace = "com.example.capstone_project"
-    compileSdk = 34
-    ndkVersion = "25.1.8937393"
+    compileSdk = 36
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -22,7 +22,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.capstone_project"
-        minSdk = 21
+        minSdk = flutter.minSdkVersion
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -31,7 +31,8 @@ android {
 
     buildTypes {
         getByName("release") {
-            isMinifyEnabled = false
+            isMinifyEnabled = true // Must be true if shrinkResources is used
+            isShrinkResources = true // Enable resource shrinking
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -43,7 +44,7 @@ flutter {
 
 dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
-    implementation("com.google.firebase:firebase-analytics-ktx")
+    implementation("com.google.firebase:firebase-analytics-ktx:21.6.1")
     implementation("androidx.multidex:multidex:2.0.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }

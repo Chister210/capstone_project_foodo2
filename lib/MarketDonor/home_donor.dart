@@ -10,14 +10,17 @@ import 'package:capstone_project/widgets/enhanced_notification_popup.dart';
 import 'package:capstone_project/widgets/donation_form.dart';
 import 'package:capstone_project/widgets/donation_card.dart';
 import 'package:capstone_project/services/donation_service.dart';
-import 'package:capstone_project/services/notification_service.dart';
+import 'package:capstone_project/services/donor_notification_service.dart';
+import 'package:capstone_project/services/messaging_service.dart';
 import 'package:capstone_project/services/terms_service.dart';
 import 'package:capstone_project/models/donation_model.dart';
 import 'package:capstone_project/widgets/terms_and_conditions_popup.dart';
 import 'package:flutter/services.dart'; // Add this import for SystemNavigator
+import 'package:cloud_firestore/cloud_firestore.dart'; // added
 
 class DonorHome extends StatefulWidget {
-  const DonorHome({super.key});
+  final String? displayName;
+  const DonorHome({Key? key, this.displayName}) : super(key: key);
 
   @override
   State<DonorHome> createState() => _DonorHomeState();
@@ -26,8 +29,11 @@ class DonorHome extends StatefulWidget {
 class _DonorHomeState extends State<DonorHome> {
   final NavigationController navigationController = Get.put(NavigationController());
   final DonationService _donationService = DonationService();
-  final NotificationService _notificationService = Get.put(NotificationService());
+  final DonorNotificationService _donorNotifications = Get.put(DonorNotificationService());
+  final MessagingService _messagingService = MessagingService();
   final TermsService _termsService = TermsService();
+
+  String? _displayName; // cached display name
 
   @override
   void initState() {
@@ -35,6 +41,7 @@ class _DonorHomeState extends State<DonorHome> {
     // Delay to ensure Scaffold is mounted
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkTermsAcceptance();
+      _loadDisplayName(); // fetch display name from Firestore / Auth
       // NotificationService is automatically initialized via Get.put()
       // No need to call any method manually
     });
@@ -316,9 +323,37 @@ class _DonorHomeState extends State<DonorHome> {
     return '${dateTime.day}/${dateTime.month}/${dateTime.year} at ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
+  Future<void> _loadDisplayName() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      // Try Firestore users collection first
+      final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final data = doc.data();
+      final nameFromDoc = data != null ? (data['displayName'] ?? data['name']) : null;
+
+      // safer fallback: use displayName if available, otherwise derive from email if present
+      final fallback = user.displayName ?? user.email?.split('@')[0] ?? 'Donor';
+
+      setState(() {
+        _displayName = (nameFromDoc != null && nameFromDoc.toString().isNotEmpty)
+            ? nameFromDoc.toString()
+            : fallback;
+      });
+    } catch (e) {
+      final user = FirebaseAuth.instance.currentUser;
+      setState(() {
+        _displayName = user?.displayName ?? user?.email?.split('@')[0] ?? 'Donor';
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
+    // priority: explicit prop from main.dart -> cached _displayName -> auth displayName -> email fallback
+    final displayName = widget.displayName ?? _displayName ?? user?.displayName ?? user?.email?.split('@')[0] ?? 'Donor';
     return Scaffold(
       body: PageView(
         controller: navigationController.pageController,
@@ -327,7 +362,7 @@ class _DonorHomeState extends State<DonorHome> {
         },
         children: [
           // Home Screen
-          _buildHomeScreen(user),
+          _buildHomeScreen(user, displayName),
           // Map Screen
           const MapScreen(),
           // Messages Screen
@@ -370,6 +405,7 @@ class _DonorHomeState extends State<DonorHome> {
                   label: 'Messages',
                   index: 2,
                   isSelected: navigationController.currentIndex.value == 2,
+                  showCounter: true,
                 ),
                 _buildNavItem(
                   icon: Icons.person_rounded,
@@ -385,7 +421,7 @@ class _DonorHomeState extends State<DonorHome> {
     );
   }
 
-  Widget _buildHomeScreen(User? user) {
+  Widget _buildHomeScreen(User? user, String displayName) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -421,7 +457,7 @@ class _DonorHomeState extends State<DonorHome> {
                 onPressed: _showNotificationPopup,
                 tooltip: 'Notifications',
               ),
-              if (_notificationService.donorNotificationCount.value > 0)
+              if (_donorNotifications.unreadCount.value > 0)
                 Positioned(
                   right: 8,
                   top: 8,
@@ -436,7 +472,7 @@ class _DonorHomeState extends State<DonorHome> {
                       minHeight: 20,
                     ),
                     child: Text(
-                      '${_notificationService.donorNotificationCount.value}',
+                      '${_donorNotifications.unreadCount.value}',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -469,7 +505,7 @@ class _DonorHomeState extends State<DonorHome> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Hello, ${user?.email ?? 'Donor'}',
+                  'Hello, $displayName',
                   style: const TextStyle(color: Colors.black, fontSize: 22, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
@@ -649,6 +685,7 @@ class _DonorHomeState extends State<DonorHome> {
     required String label,
     required int index,
     required bool isSelected,
+    bool showCounter = false,
   }) {
     return GestureDetector(
       onTap: () => navigationController.changePage(index),
@@ -661,10 +698,48 @@ class _DonorHomeState extends State<DonorHome> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              color: isSelected ? const Color(0xFF22c55e) : Colors.black54,
-              size: 24,
+            Stack(
+              children: [
+                Icon(
+                  icon,
+                  color: isSelected ? const Color(0xFF22c55e) : Colors.black54,
+                  size: 24,
+                ),
+                if (showCounter)
+                  StreamBuilder<int>(
+                    stream: _messagingService.getUnreadMessageCount(FirebaseAuth.instance.currentUser?.uid ?? ''),
+                    builder: (context, snapshot) {
+                      final unreadCount = snapshot.data ?? 0;
+                      if (unreadCount > 0) {
+                        return Positioned(
+                          right: -2,
+                          top: -2,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF22c55e),
+                              shape: BoxShape.circle,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              unreadCount > 99 ? '99+' : unreadCount.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(

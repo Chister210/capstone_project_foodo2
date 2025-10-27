@@ -6,20 +6,28 @@ import 'package:capstone_project/controllers/navigation_controller.dart';
 import 'package:capstone_project/screens/map_screen.dart';
 import 'package:capstone_project/screens/profile_screen.dart';
 import 'package:capstone_project/screens/chat_list_screen.dart';
+import 'package:capstone_project/screens/statistics_screen.dart';
+import 'package:capstone_project/screens/public_feedback_screen.dart';
+import 'package:capstone_project/utils/responsive_layout.dart';
+import 'package:capstone_project/widgets/responsive_bottom_navigation.dart';
+import 'package:capstone_project/services/user_service.dart';
+import 'package:capstone_project/screens/receiver_donation_details_screen.dart';
 import 'package:capstone_project/widgets/enhanced_notification_popup.dart';
 import 'package:capstone_project/widgets/donation_card.dart';
 import 'package:capstone_project/services/donation_service.dart';
-import 'package:capstone_project/services/notification_service.dart';
+import 'package:capstone_project/services/receiver_notification_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:capstone_project/services/messaging_service.dart';
 import 'package:capstone_project/services/terms_service.dart';
 import 'package:capstone_project/services/location_tracking_service.dart';
 import 'package:capstone_project/models/donation_model.dart';
 import 'package:capstone_project/widgets/terms_and_conditions_popup.dart';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/services.dart'; // Add this import for SystemNavigator
 
 class ReceiverHome extends StatefulWidget {
-  const ReceiverHome({super.key});
+  final String? displayName;
+  const ReceiverHome({Key? key, this.displayName}) : super(key: key);
 
   @override
   State<ReceiverHome> createState() => _ReceiverHomeState();
@@ -29,8 +37,10 @@ class _ReceiverHomeState extends State<ReceiverHome> {
   bool sentOnce = false;
   final NavigationController navigationController = Get.put(NavigationController());
   final DonationService _donationService = DonationService();
-  final NotificationService _notificationService = Get.put(NotificationService());
+  final ReceiverNotificationService _receiverNotifications = Get.put(ReceiverNotificationService());
+  final MessagingService _messagingService = MessagingService();
   final TermsService _termsService = TermsService();
+  final UserService _userService = UserService();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -45,6 +55,26 @@ class _ReceiverHomeState extends State<ReceiverHome> {
       );
     }
   }
+
+  Future<String?> _getUserName() async {
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      
+      if (userDoc.exists) {
+        return userDoc.data()?['name'] as String?;
+      }
+    }
+    return null;
+  } catch (e) {
+    print('Error fetching user name: $e');
+    return null;
+  }
+}
 
   Future<void> _refreshVerification() async {
     await FirebaseAuth.instance.currentUser?.reload();
@@ -70,7 +100,18 @@ class _ReceiverHomeState extends State<ReceiverHome> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _sendVerificationIfNeeded();
       _checkTermsAcceptance();
+      _initializeNotificationService();
     });
+  }
+
+  Future<void> _initializeNotificationService() async {
+    try {
+      print('🔔 Initializing receiver notification service...');
+      await _receiverNotifications.initialize();
+      print('✅ Receiver notification service initialized');
+    } catch (e) {
+      print('❌ Error initializing receiver notification service: $e');
+    }
   }
 
   @override
@@ -133,101 +174,10 @@ class _ReceiverHomeState extends State<ReceiverHome> {
   }
 
   void _showDonationDetails(DonationModel donation) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(donation.title),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                height: 200,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  image: DecorationImage(
-                    image: _getImageProvider(donation.imageUrl),
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Description:',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(donation.description),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Icon(
-                    donation.deliveryType == 'pickup' 
-                        ? Icons.location_on_rounded 
-                        : Icons.delivery_dining_rounded,
-                    color: const Color(0xFF22c55e),
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Type: ${donation.deliveryType == 'pickup' ? 'Pickup' : 'Delivery'}',
-                    style: const TextStyle(fontWeight: FontWeight.w500),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.schedule_rounded,
-                    color: Color(0xFF22c55e),
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Pickup: ${_formatDateTime(donation.pickupTime)}',
-                    style: const TextStyle(fontWeight: FontWeight.w500),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.person_rounded,
-                    color: Color(0xFF22c55e),
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Donor: ${donation.donorEmail.split('@')[0]}',
-                    style: const TextStyle(fontWeight: FontWeight.w500),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          if (donation.status == 'available')
-            ElevatedButton(
-              onPressed: () => _claimDonation(donation),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF22c55e),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Claim Donation'),
-            ),
-        ],
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ReceiverDonationDetailsScreen(donation: donation),
       ),
     );
   }
@@ -281,7 +231,7 @@ class _ReceiverHomeState extends State<ReceiverHome> {
       }
     }
   // (No longer needed, direct import used)
-  throw UnimplementedError();
+  // Function completes successfully; removed accidental throw to avoid syntax/runtime issues.
   }
 
   Future<bool> _showClaimConfirmationDialog(DonationModel donation) async {
@@ -456,121 +406,31 @@ class _ReceiverHomeState extends State<ReceiverHome> {
           const ProfileScreen(),
         ],
       ),
-      bottomNavigationBar: Obx(() => Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            ),
+      bottomNavigationBar: Obx(() {
+        return ResponsiveBottomNavigation(
+          currentIndex: navigationController.currentIndex.value,
+          onTap: (index) => navigationController.changePage(index),
+          items: const [
+            NavigationItem(icon: Icons.home_rounded, label: 'Home'),
+            NavigationItem(icon: Icons.map_rounded, label: 'Map'),
+            NavigationItem(icon: Icons.chat_rounded, label: 'Messages', showCounter: true),
+            NavigationItem(icon: Icons.person_rounded, label: 'Profile'),
           ],
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildNavItem(
-                  icon: Icons.home_rounded,
-                  label: 'Home',
-                  index: 0,
-                  isSelected: navigationController.currentIndex.value == 0,
-                ),
-                _buildNavItem(
-                  icon: Icons.map_rounded,
-                  label: 'Map',
-                  index: 1,
-                  isSelected: navigationController.currentIndex.value == 1,
-                ),
-                _buildNavItem(
-                  icon: Icons.chat_rounded,
-                  label: 'Messages',
-                  index: 2,
-                  isSelected: navigationController.currentIndex.value == 2,
-                ),
-                _buildNavItem(
-                  icon: Icons.person_rounded,
-                  label: 'Profile',
-                  index: 3,
-                  isSelected: navigationController.currentIndex.value == 3,
-                ),
-              ],
-            ),
-          ),
-        ),
-      )),
+          unreadCount: _messagingService.unreadCount.value,
+        );
+      }),
     );
   }
 
-  Widget _buildHomeScreen(User? user, bool isUnverified) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                Colors.white,
-                Color(0xFFF1F5F9),
-                Color(0xFFE0F7FA),
-              ],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-          ),
-        ),
-        title: const Text(
-          'Receiver Dashboard',
-          style: TextStyle(
-            color: Colors.black,
-            fontWeight: FontWeight.bold,
-            fontSize: 20,
-          ),
-        ),
-        iconTheme: const IconThemeData(color: Colors.black),
-        actions: [
-          // Notification Icon
-          Obx(() => Stack(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.notifications_rounded),
-                onPressed: _showNotificationPopup,
-                tooltip: 'Notifications',
-              ),
-              if (_notificationService.receiverNotificationCount > 0)
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF22c55e),
-                      shape: BoxShape.circle,
-                    ),
-                    constraints: const BoxConstraints(
-                      minWidth: 20,
-                      minHeight: 20,
-                    ),
-                    child: Text(
-                      '${_notificationService.receiverNotificationCount}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-            ],
-          )),
-        ],
-      ),
-      body: Container(
+ Widget _buildHomeScreen(User? user, bool isUnverified) {
+  // prefer explicit prop from main.dart -> Firestore cache -> auth -> email fallback
+  final displayName = widget.displayName ?? user?.displayName ?? user?.email?.split('@')[0] ?? 'Receiver';
+
+  return Scaffold(
+    appBar: AppBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      flexibleSpace: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
@@ -582,185 +442,458 @@ class _ReceiverHomeState extends State<ReceiverHome> {
             end: Alignment.bottomCenter,
           ),
         ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+      ),
+      title: const Text(
+        'Receiver Dashboard',
+        style: TextStyle(
+          color: Colors.black,
+          fontWeight: FontWeight.bold,
+          fontSize: 20,
+        ),
+      ),
+      iconTheme: const IconThemeData(color: Colors.black),
+      actions: [
+        // Notification Icon
+        Obx(() => Stack(
               children: [
-                if (isUnverified)
-                  _VerifyBanner(onResend: _sendVerificationIfNeeded, onRefresh: _refreshVerification),
-                Text(
-                  'Hello, ${user?.email ?? 'Receiver'}',
-                  style: const TextStyle(color: Colors.black, fontSize: 22, fontWeight: FontWeight.bold),
+                IconButton(
+                  icon: const Icon(Icons.notifications_rounded),
+                  onPressed: _showNotificationPopup,
+                  tooltip: 'Notifications',
                 ),
-                const SizedBox(height: 16),
-                
-                // Search Bar
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
+                if (_receiverNotifications.unreadCount.value > 0)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF22c55e),
+                        shape: BoxShape.circle,
                       ),
-                    ],
-                  ),
-                  child: TextField(
-                    controller: _searchController,
-                    onChanged: (value) {
-                      setState(() {
-                        _searchQuery = value.toLowerCase();
-                      });
-                    },
-                    decoration: InputDecoration(
-                      hintText: 'Search available markets and donations...',
-                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear, color: Colors.grey),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() {
-                                  _searchQuery = '';
-                                });
-                              },
-                            )
-                          : null,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
+                      constraints: const BoxConstraints(
+                        minWidth: 20,
+                        minHeight: 20,
                       ),
-                      filled: true,
-                      fillColor: Colors.white,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Text(
+                        '${_receiverNotifications.unreadCount.value}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                // Available Donations Section
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.restaurant_rounded,
-                      color: Color(0xFF22c55e),
-                      size: 24,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Available Donations',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
+              ],
+            )),
+      ],
+    ),
+    body: Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.white,
+            Color(0xFFF1F5F9),
+            Color(0xFFE0F7FA),
+          ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Hello, $displayName',
+                style: const TextStyle(
+                    color: Colors.black, fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+
+              // Search Bar
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                
-                // Donations List
-                Expanded(
-                  child: StreamBuilder<List<DonationModel>>(
-                    stream: _donationService.getAvailableDonations(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(
-                          child: CircularProgressIndicator(
-                            color: Color(0xFF22c55e),
-                          ),
-                        );
-                      }
-                      
-                      if (snapshot.hasError) {
-                        return Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.error_rounded,
-                                color: Colors.red,
-                                size: 48,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Error loading donations: ${snapshot.error}',
-                                style: const TextStyle(color: Colors.red),
-                                textAlign: TextAlign.center,
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-                      
-                      final allDonations = snapshot.data ?? [];
-                      
-                      // Filter donations based on search query
-                      final donations = _searchQuery.isEmpty
-                          ? allDonations
-                          : allDonations.where((donation) {
-                              return donation.title.toLowerCase().contains(_searchQuery) ||
-                                     donation.description.toLowerCase().contains(_searchQuery) ||
-                                     (donation.foodType?.toLowerCase().contains(_searchQuery) ?? false) ||
-                                     (donation.marketAddress?.toLowerCase().contains(_searchQuery) ?? false) ||
-                                     donation.donorEmail.toLowerCase().contains(_searchQuery);
-                            }).toList();
-                      
-                      if (donations.isEmpty) {
-                        return Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                _searchQuery.isNotEmpty ? Icons.search_off : Icons.restaurant_rounded,
-                                color: Colors.grey.withOpacity(0.6),
-                                size: 64,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                _searchQuery.isNotEmpty ? 'No results found' : 'No donations available',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  color: Colors.grey.withOpacity(0.6),
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                _searchQuery.isNotEmpty 
-                                    ? 'Try searching with different keywords'
-                                    : 'Check back later for new food donations',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey.withOpacity(0.6),
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-                      
-                      return ListView.builder(
-                        itemCount: donations.length,
-                        itemBuilder: (context, index) {
-                          final donation = donations[index];
-                          return DonationCard(
-                            donation: donation,
-                            isDonorView: false,
-                            onTap: () => _showDonationDetails(donation),
-                            onClaim: () => _claimDonation(donation),
-                          );
-                        },
-                      );
-                    },
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (value) {
+                    setState(() {
+                      _searchQuery = value.toLowerCase();
+                    });
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Search available markets and donations...',
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, color: Colors.grey),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {
+                                _searchQuery = '';
+                              });
+                            },
+                          )
+                        : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 16),
+              // Available Donations Section
+              Row(
+                children: [
+                  const Icon(
+                    Icons.restaurant_rounded,
+                    color: Color(0xFF22c55e),
+                    size: 24,
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Available Donations',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Donations List
+              Expanded(
+                child: StreamBuilder<List<DonationModel>>(
+                  stream: _donationService.getAvailableDonations(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF22c55e),
+                        ),
+                      );
+                    }
+
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.error_rounded,
+                              color: Colors.red,
+                              size: 48,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Error loading donations: ${snapshot.error}',
+                              style: const TextStyle(color: Colors.red),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    final allDonations = snapshot.data ?? [];
+
+                    // Filter donations based on search query
+                    final donations = _searchQuery.isEmpty
+                        ? allDonations
+                        : allDonations.where((donation) {
+                            return donation.title.toLowerCase().contains(_searchQuery) ||
+                                donation.description.toLowerCase().contains(_searchQuery) ||
+                                (donation.foodType
+                                        ?.toLowerCase()
+                                        .contains(_searchQuery) ??
+                                    false) ||
+                                (donation.marketAddress
+                                        ?.toLowerCase()
+                                        .contains(_searchQuery) ??
+                                    false) ||
+                                donation.donorEmail.toLowerCase().contains(_searchQuery);
+                          }).toList();
+
+                    if (donations.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _searchQuery.isNotEmpty
+                                  ? Icons.search_off
+                                  : Icons.restaurant_rounded,
+                              color: Colors.grey.withOpacity(0.6),
+                              size: 64,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _searchQuery.isNotEmpty
+                                  ? 'No results found'
+                                  : 'No donations available',
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.grey.withOpacity(0.6),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _searchQuery.isNotEmpty
+                                  ? 'Try searching with different keywords'
+                                  : 'Check back later for new food donations',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey.withOpacity(0.6),
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    return ListView.builder(
+                      itemCount: donations.length,
+                      itemBuilder: (context, index) {
+                        final donation = donations[index];
+                        return DonationCard(
+                          donation: donation,
+                          isDonorView: false,
+                          onTap: () => _showDonationDetails(donation),
+                          onClaim: () => _claimDonation(donation),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+    );
+  }
+
+  Widget _buildMobileNavigationBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: ResponsiveLayout.getPadding(context),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNavItem(
+                icon: Icons.home_rounded,
+                label: 'Home',
+                index: 0,
+                isSelected: navigationController.currentIndex.value == 0,
+              ),
+              _buildNavItem(
+                icon: Icons.map_rounded,
+                label: 'Map',
+                index: 1,
+                isSelected: navigationController.currentIndex.value == 1,
+              ),
+              _buildNavItem(
+                icon: Icons.chat_rounded,
+                label: 'Messages',
+                index: 2,
+                isSelected: navigationController.currentIndex.value == 2,
+                showCounter: true,
+              ),
+              _buildNavItem(
+                icon: Icons.analytics_rounded,
+                label: 'Stats',
+                index: 3,
+                isSelected: navigationController.currentIndex.value == 3,
+              ),
+              _buildNavItem(
+                icon: Icons.feedback_rounded,
+                label: 'Feedback',
+                index: 4,
+                isSelected: navigationController.currentIndex.value == 4,
+              ),
+              _buildNavItem(
+                icon: Icons.person_rounded,
+                label: 'Profile',
+                index: 5,
+                isSelected: navigationController.currentIndex.value == 5,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabletNavigationBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: ResponsiveLayout.getPadding(context),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildNavItem(
+                icon: Icons.home_rounded,
+                label: 'Home',
+                index: 0,
+                isSelected: navigationController.currentIndex.value == 0,
+                isTablet: true,
+              ),
+              _buildNavItem(
+                icon: Icons.map_rounded,
+                label: 'Map',
+                index: 1,
+                isSelected: navigationController.currentIndex.value == 1,
+                isTablet: true,
+              ),
+              _buildNavItem(
+                icon: Icons.chat_rounded,
+                label: 'Messages',
+                index: 2,
+                isSelected: navigationController.currentIndex.value == 2,
+                showCounter: true,
+                isTablet: true,
+              ),
+              _buildNavItem(
+                icon: Icons.analytics_rounded,
+                label: 'Statistics',
+                index: 3,
+                isSelected: navigationController.currentIndex.value == 3,
+                isTablet: true,
+              ),
+              _buildNavItem(
+                icon: Icons.feedback_rounded,
+                label: 'Feedback',
+                index: 4,
+                isSelected: navigationController.currentIndex.value == 4,
+                isTablet: true,
+              ),
+              _buildNavItem(
+                icon: Icons.person_rounded,
+                label: 'Profile',
+                index: 5,
+                isSelected: navigationController.currentIndex.value == 5,
+                isTablet: true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopNavigationBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: ResponsiveLayout.getPadding(context),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildNavItem(
+                icon: Icons.home_rounded,
+                label: 'Home',
+                index: 0,
+                isSelected: navigationController.currentIndex.value == 0,
+                isDesktop: true,
+              ),
+              const SizedBox(width: 24),
+              _buildNavItem(
+                icon: Icons.map_rounded,
+                label: 'Map',
+                index: 1,
+                isSelected: navigationController.currentIndex.value == 1,
+                isDesktop: true,
+              ),
+              const SizedBox(width: 24),
+              _buildNavItem(
+                icon: Icons.chat_rounded,
+                label: 'Messages',
+                index: 2,
+                isSelected: navigationController.currentIndex.value == 2,
+                showCounter: true,
+                isDesktop: true,
+              ),
+              const SizedBox(width: 24),
+              _buildNavItem(
+                icon: Icons.analytics_rounded,
+                label: 'Statistics',
+                index: 3,
+                isSelected: navigationController.currentIndex.value == 3,
+                isDesktop: true,
+              ),
+              const SizedBox(width: 24),
+              _buildNavItem(
+                icon: Icons.feedback_rounded,
+                label: 'Feedback',
+                index: 4,
+                isSelected: navigationController.currentIndex.value == 4,
+                isDesktop: true,
+              ),
+              const SizedBox(width: 24),
+              _buildNavItem(
+                icon: Icons.person_rounded,
+                label: 'Profile',
+                index: 5,
+                isSelected: navigationController.currentIndex.value == 5,
+                isDesktop: true,
+              ),
+            ],
           ),
         ),
       ),
@@ -772,29 +905,73 @@ class _ReceiverHomeState extends State<ReceiverHome> {
     required String label,
     required int index,
     required bool isSelected,
+    bool showCounter = false,
+    bool isTablet = false,
+    bool isDesktop = false,
   }) {
     return GestureDetector(
       onTap: () => navigationController.changePage(index),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: EdgeInsets.symmetric(
+          horizontal: isDesktop ? 20 : (isTablet ? 16 : 12),
+          vertical: isDesktop ? 12 : (isTablet ? 10 : 8),
+        ),
         decoration: BoxDecoration(
           color: isSelected ? const Color(0xFF22c55e).withOpacity(0.1) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(ResponsiveLayout.getBorderRadius(context)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              color: isSelected ? const Color(0xFF22c55e) : Colors.black54,
-              size: 24,
+            Stack(
+              children: [
+                Icon(
+                  icon,
+                  color: isSelected ? const Color(0xFF22c55e) : Colors.black54,
+                  size: ResponsiveLayout.getIconSize(context),
+                ),
+                if (showCounter)
+                  StreamBuilder<int>(
+                    stream: _messagingService.getReceiverUnreadMessageCount(FirebaseAuth.instance.currentUser?.uid ?? ''),
+                    builder: (context, snapshot) {
+                      final unreadCount = snapshot.data ?? 0;
+                      if (unreadCount > 0) {
+                        return Positioned(
+                          right: -2,
+                          top: -2,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF22c55e),
+                              shape: BoxShape.circle,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              unreadCount > 99 ? '99+' : unreadCount.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  ),
+              ],
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: ResponsiveLayout.getSpacing(context) / 2),
             Text(
               label,
               style: TextStyle(
                 color: isSelected ? const Color(0xFF22c55e) : Colors.black54,
-                fontSize: 12,
+                fontSize: isDesktop ? 14 : (isTablet ? 12 : 10),
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
               ),
             ),

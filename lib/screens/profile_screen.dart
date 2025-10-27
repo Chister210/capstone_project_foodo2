@@ -40,14 +40,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
           .doc(user.uid)
           .get();
 
-      if (userDoc.exists) {
-        setState(() {
-          _user = UserModel.fromFirestore(userDoc);
-          _isLoading = false;
-        });
-      } else {
-        setState(() => _isLoading = false);
+      final raw = userDoc.exists ? (userDoc.data() as Map<String,dynamic>) : <String,dynamic>{};
+      print('DEBUG userDoc raw: $raw');
+      print('DEBUG auth user.displayName: ${user.displayName}, email: ${user.email}');
+
+      // Force display name from Firestore (check common name fields)
+      final candidate = (raw['displayName'] ??
+              raw['name'] ??
+              raw['fullName'] ??
+              raw['firstName'] ??
+              raw['marketName'] ??
+              raw['username']);
+      // ignore obvious role values that were accidentally stored in name
+      final badRoles = {'donor', 'receiver', 'market', 'admin', 'user'};
+      final docName = (candidate != null && !badRoles.contains(candidate.toString().toLowerCase()))
+          ? candidate
+          : null;
+      // guaranteed non-null trimmed string (fallback to auth email prefix)
+      final displayName =
+          (docName != null && docName.toString().trim().isNotEmpty)
+              ? docName.toString().trim()
+              : (user.displayName ?? user.email?.split('@')[0] ?? 'User');
+
+      // Update user document with resolved display name (if different)
+      if (displayName != user.displayName) {
+        await user.updateProfile(displayName: displayName);
+        // Refresh user data
+        await _loadUserData();
+        return;
       }
+
+      // still keep the UserModel for other fields but don't rely on it for the displayed name
+      setState(() {
+        _user = UserModel.fromFirestore(userDoc);
+        _isLoading = false;
+      });
     } catch (e) {
       setState(() => _isLoading = false);
       Get.snackbar(
@@ -245,6 +272,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
+    // Prefer user model displayName, then auth displayName, then email prefix
+    final displayName = _user?.displayName
+        ?? FirebaseAuth.instance.currentUser?.displayName
+        ?? FirebaseAuth.instance.currentUser?.email?.split('@')[0]
+        ?? 'User';
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
@@ -301,7 +334,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    _user!.displayName,
+                    displayName,
                     style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
@@ -340,9 +373,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                         ),
                   ],
-                    ],
-                  ),
-                ),
+                   ],
+                 ),
+               ),
 
             // User information
             const SizedBox(height: 16),

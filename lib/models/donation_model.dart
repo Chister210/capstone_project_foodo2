@@ -19,7 +19,10 @@ class DonationModel {
   final String? marketAddress;
   final String? receiverLocationId; // For live tracking
   final String? foodType;
+  final String? foodCategory; // New field for food category
   final String? quantity;
+  final String? specification; // New field for donation specification
+  final int? maxRecipients; // New field for maximum number of recipients
   final List<String>? allergens;
   
   // Enhanced fields for messaging and tracking
@@ -50,7 +53,10 @@ class DonationModel {
     this.marketAddress,
     this.receiverLocationId,
     this.foodType,
+    this.foodCategory,
     this.quantity,
+    this.specification,
+    this.maxRecipients,
     this.allergens,
     this.chatId,
     this.claimedAt,
@@ -88,7 +94,10 @@ class DonationModel {
       marketAddress: data['marketAddress'],
       receiverLocationId: data['receiverLocationId'],
       foodType: data['foodType'],
+      foodCategory: data['foodCategory'],
       quantity: data['quantity'],
+      specification: data['specification'],
+      maxRecipients: data['maxRecipients'],
       allergens: data['allergens'] != null ? List<String>.from(data['allergens']) : null,
       chatId: data['chatId'],
       claimedAt: data['claimedAt'] != null ? (data['claimedAt'] as Timestamp).toDate() : null,
@@ -119,7 +128,10 @@ class DonationModel {
       'marketAddress': marketAddress,
       'receiverLocationId': receiverLocationId,
       'foodType': foodType,
+      'foodCategory': foodCategory,
       'quantity': quantity,
+      'specification': specification,
+      'maxRecipients': maxRecipients,
       'allergens': allergens,
       'chatId': chatId,
       'claimedAt': claimedAt != null ? Timestamp.fromDate(claimedAt!) : null,

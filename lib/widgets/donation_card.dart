@@ -870,6 +870,11 @@ Widget _buildDonorSection() {
   }
 
   Widget _buildStatusBadge() {
+    // If donation is expired, don't show a badge
+    if (donation.status == 'expired') {
+      return const SizedBox.shrink();
+    }
+
     Color backgroundColor;
     Color textColor;
     String text;
@@ -889,11 +894,6 @@ Widget _buildDonorSection() {
         backgroundColor = const Color(0xFF6b7280);
         textColor = Colors.white;
         text = 'Completed';
-        break;
-      case 'expired':
-        backgroundColor = const Color(0xFFef4444);
-        textColor = Colors.white;
-        text = 'Expired';
         break;
       default:
         backgroundColor = Colors.grey;
@@ -924,13 +924,15 @@ Widget _buildDonorSection() {
     final hoursLeft = timeDiff.inHours;
     final minutesLeft = timeDiff.inMinutes % 60;
 
+    // If already expired, don't show the time badge
+    if (timeDiff.isNegative) {
+      return const SizedBox.shrink();
+    }
+
     String timeText;
     Color backgroundColor;
 
-    if (timeDiff.isNegative) {
-      timeText = 'Expired';
-      backgroundColor = const Color(0xFFef4444);
-    } else if (hoursLeft < 1) {
+    if (hoursLeft < 1) {
       timeText = '${minutesLeft}m left';
       backgroundColor = const Color(0xFFef4444);
     } else if (hoursLeft < 24) {

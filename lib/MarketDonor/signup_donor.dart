@@ -9,6 +9,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
+import 'package:capstone_project/services/email_validation_service.dart';
 
 class DonorSignup extends StatefulWidget {
   const DonorSignup({super.key});
@@ -27,10 +28,44 @@ class _DonorSignupState extends State<DonorSignup> {
   final TextEditingController phoneController = TextEditingController();
   bool isLoading = false;
   bool isPasswordVisible = false;
+  bool isConfirmPasswordVisible = false;
   
   // Location variables
   LatLng? selectedLocation;
   String? selectedAddress;
+  final EmailValidationService _emailValidator = EmailValidationService();
+
+  // Password validation function
+  bool _isPasswordValid(String password) {
+    // Check if password has at least 8 characters
+    if (password.length < 8) return false;
+    
+    // Check if password has at least 1 uppercase letter
+    if (!password.contains(RegExp(r'[A-Z]'))) return false;
+    
+    // Check if password has at least 1 special character
+    if (!password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) return false;
+    
+    return true;
+  }
+
+  String? _getPasswordValidationMessage(String password) {
+    if (password.isEmpty) return null;
+    
+    if (password.length < 8) {
+      return 'Password must be at least 8 characters';
+    }
+    
+    if (!password.contains(RegExp(r'[A-Z]'))) {
+      return 'Password must contain at least 1 uppercase letter';
+    }
+    
+    if (!password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) {
+      return 'Password must contain at least 1 special character';
+    }
+    
+    return null;
+  }
 
   Future<void> signUp() async {
     if (emailController.text.isEmpty ||
@@ -43,16 +78,29 @@ class _DonorSignupState extends State<DonorSignup> {
       _showErrorDialog('Please enter all fields and select your market location');
       return;
     }
+
+    // Validate password strength
+    final passwordValidationMessage = _getPasswordValidationMessage(passwordController.text);
+    if (passwordValidationMessage != null) {
+      _showErrorDialog(passwordValidationMessage);
+      return;
+    }
+
     if (passwordController.text != confirmPasswordController.text) {
       _showErrorDialog('Passwords do not match');
       return;
     }
+
     setState(() => isLoading = true);
     try {
       final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
+      
+      // Send email verification
+      await cred.user?.sendEmailVerification();
+      
       await cred.user?.updateDisplayName('donor');
       
       // Create user document in users collection with enhanced data
@@ -69,12 +117,13 @@ class _DonorSignupState extends State<DonorSignup> {
         'points': 0,
         'isActive': true,
         'isOnline': false,
+        'emailVerified': false, // Track email verification status
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
         'termsAccepted': false,
       });
       
-      _showSuccessDialog();
+      _showEmailVerificationDialog(cred.user!);
     } on FirebaseAuthException catch (e) {
       _showErrorDialog(e.message ?? 'Signup failed. Please try again.');
     } catch (e) {
@@ -82,6 +131,201 @@ class _DonorSignupState extends State<DonorSignup> {
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
+  }
+
+  void _showEmailVerificationDialog(User user) {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // User must take action
+      builder: (BuildContext context) {
+        return Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Lottie.asset(
+                  'assets/lottie_files/email_verification.json', // You can use a different Lottie file for email
+                  height: 120,
+                  width: 120,
+                  fit: BoxFit.contain,
+                  repeat: false,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Verify Your Email',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'We have sent a verification link to your email address:',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.black54,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  user.email ?? '',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Please check your inbox and click the verification link to activate your account.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          Get.offAll(() => const RoleSelect());
+                        },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          side: const BorderSide(color: Colors.grey),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _checkEmailVerification(user);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF22c55e),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        child: const Text(
+                          'I\'ve Verified',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () async {
+                    try {
+                      await user.sendEmailVerification();
+                      _showResendSuccessDialog();
+                    } catch (e) {
+                      _showErrorDialog('Failed to resend verification email. Please try again.');
+                    }
+                  },
+                  child: const Text(
+                    'Resend Verification Email',
+                    style: TextStyle(
+                      color: Color(0xFF22c55e),
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showResendSuccessDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Email Sent'),
+          content: const Text('Verification email has been resent successfully. Please check your inbox.'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _checkEmailVerification(User user) async {
+    setState(() => isLoading = true);
+    
+    try {
+      // Reload user to get latest email verification status
+      await user.reload();
+      final updatedUser = FirebaseAuth.instance.currentUser;
+      
+      if (updatedUser != null && updatedUser.emailVerified) {
+        // Update Firestore with verified status
+        await FirebaseFirestore.instance.collection('users').doc(updatedUser.uid).update({
+          'emailVerified': true,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        
+        _showSuccessDialog();
+      } else {
+        _showVerificationRequiredDialog(user);
+      }
+    } catch (e) {
+      _showErrorDialog('Failed to check verification status. Please try again.');
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  void _showVerificationRequiredDialog(User user) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Email Not Verified'),
+          content: const Text('Your email address has not been verified yet. Please check your inbox and click the verification link before continuing.'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showEmailVerificationDialog(user);
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showSuccessDialog() {
@@ -106,7 +350,7 @@ class _DonorSignupState extends State<DonorSignup> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'Sign Up Successful!',
+                  'Email Verified Successfully!',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -372,22 +616,23 @@ class _DonorSignupState extends State<DonorSignup> {
                                 const SizedBox(height: 16),
                                 _Tf(controller: emailController, hint: 'Email address', icon: Icons.email_rounded, keyboardType: TextInputType.emailAddress),
                                 const SizedBox(height: 16),
-                                _Tf(
+                                _PasswordField(
                                   controller: passwordController,
                                   hint: 'Password',
-                                  icon: Icons.lock_rounded,
-                                  obscure: !isPasswordVisible,
-                                  trailing: IconButton(
-                                    icon: Icon(isPasswordVisible ? Icons.visibility_off : Icons.visibility, color: Colors.black54),
-                                    onPressed: () => setState(() => isPasswordVisible = !isPasswordVisible),
-                                  ),
+                                  isPasswordVisible: isPasswordVisible,
+                                  onVisibilityChanged: () => setState(() => isPasswordVisible = !isPasswordVisible),
+                                  validator: _getPasswordValidationMessage,
                                 ),
                                 const SizedBox(height: 16),
                                 _Tf(
                                   controller: confirmPasswordController,
                                   hint: 'Confirm password',
                                   icon: Icons.lock_outline_rounded,
-                                  obscure: !isPasswordVisible,
+                                  obscure: !isConfirmPasswordVisible,
+                                  trailing: IconButton(
+                                    icon: Icon(isConfirmPasswordVisible ? Icons.visibility_off : Icons.visibility, color: Colors.black54),
+                                    onPressed: () => setState(() => isConfirmPasswordVisible = !isConfirmPasswordVisible),
+                                  ),
                                 ),
                                 const SizedBox(height: 20),
                                 SizedBox(
@@ -608,6 +853,90 @@ class _Tf extends StatelessWidget {
           borderSide: const BorderSide(color: Color(0xFF3b82f6)),
         ),
       ),
+    );
+  }
+}
+
+class _PasswordField extends StatefulWidget {
+  final TextEditingController controller;
+  final String hint;
+  final bool isPasswordVisible;
+  final VoidCallback onVisibilityChanged;
+  final String? Function(String) validator;
+
+  const _PasswordField({
+    required this.controller,
+    required this.hint,
+    required this.isPasswordVisible,
+    required this.onVisibilityChanged,
+    required this.validator,
+  });
+
+  @override
+  State<_PasswordField> createState() => _PasswordFieldState();
+}
+
+class _PasswordFieldState extends State<_PasswordField> {
+  String? _validationMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: widget.controller,
+          obscureText: !widget.isPasswordVisible,
+          style: const TextStyle(color: Colors.black),
+          onChanged: (value) {
+            setState(() {
+              _validationMessage = widget.validator(value);
+            });
+          },
+          decoration: InputDecoration(
+            hintText: widget.hint,
+            hintStyle: const TextStyle(color: Colors.black54),
+            prefixIcon: const Icon(Icons.lock_rounded, color: Colors.black54),
+            suffixIcon: IconButton(
+              icon: Icon(widget.isPasswordVisible ? Icons.visibility_off : Icons.visibility, color: Colors.black54),
+              onPressed: widget.onVisibilityChanged,
+            ),
+            filled: true,
+            fillColor: Colors.grey.withOpacity(0.05),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.withOpacity(0.3)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFF3b82f6)),
+            ),
+            errorText: _validationMessage,
+            errorStyle: const TextStyle(fontSize: 12),
+          ),
+        ),
+        if (_validationMessage == null && widget.controller.text.isNotEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 4.0, left: 12.0),
+            child: Text(
+              '✓ Password meets security requirements',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.green,
+              ),
+            ),
+          ),
+        const Padding(
+          padding: EdgeInsets.only(top: 4.0, left: 12.0),
+          child: Text(
+            'Password must contain: 8+ characters, 1 uppercase letter, 1 special character',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.black54,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

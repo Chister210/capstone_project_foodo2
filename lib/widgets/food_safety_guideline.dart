@@ -311,7 +311,17 @@ class _FoodSafetyGuidelineState extends State<FoodSafetyGuideline> {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              child: const Text('Complete Guidelines'),
+                              // responsive text: smaller on narrow screens, scales if needed
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  'Complete Guidelines',
+                                  style: TextStyle(
+                                    fontSize: MediaQuery.of(context).size.width < 360 ? 12 : 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
                             ),
                     ),
                   ],

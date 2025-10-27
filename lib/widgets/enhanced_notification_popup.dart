@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
-import '../services/notification_service.dart';
+import '../services/receiver_notification_service.dart';
+import '../services/donor_notification_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class EnhancedNotificationPopup extends StatelessWidget {
   final String userType;
@@ -13,7 +16,10 @@ class EnhancedNotificationPopup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final NotificationService notificationService = Get.find<NotificationService>();
+    // Choose service based on userType
+    final bool isDonor = userType == 'donor';
+    final donorService = Get.find<DonorNotificationService>();
+    final receiverService = Get.find<ReceiverNotificationService>();
     
     return Container(
       width: 350,
@@ -33,19 +39,23 @@ class EnhancedNotificationPopup extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           // Header
-          _buildHeader(notificationService),
+          _buildHeader(isDonor ? donorService.unreadCount.value : receiverService.unreadCount.value),
           
           // Notification List
-          _buildNotificationList(notificationService),
+          _buildNotificationList(isDonor ? donorService.notifications : receiverService.notifications,
+              onMarkRead: (id) async {
+            // Mark as read directly in Firestore
+            await FirebaseFirestore.instance.collection('notifications').doc(id).update({'isRead': true});
+          }),
           
           // Footer
-          _buildFooter(context, notificationService),
+          _buildFooter(context, isDonor),
         ],
       ),
     );
   }
 
-  Widget _buildHeader(NotificationService notificationService) {
+  Widget _buildHeader(int unreadCount) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: const BoxDecoration(
@@ -72,30 +82,30 @@ class EnhancedNotificationPopup extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          Obx(() => Container(
+          Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.2),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
-              _getNotificationCount(notificationService).toString(),
+              unreadCount.toString(),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
               ),
             ),
-          )),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildNotificationList(NotificationService notificationService) {
+  Widget _buildNotificationList(List<Map<String, dynamic>> items, {required Future<void> Function(String id) onMarkRead}) {
     return Expanded(
       child: Obx(() {
-        final notifications = _getNotifications(notificationService);
+        final notifications = items;
         
         if (notifications.isEmpty) {
           return _buildEmptyState();
@@ -113,7 +123,7 @@ class EnhancedNotificationPopup extends StatelessWidget {
               final notification = notifications[index];
               return _NotificationItem(
                 notification: notification,
-                onTap: () => _handleNotificationTap(notification, notificationService),
+                onTap: () => _handleNotificationTap(notification, onMarkRead),
               );
             },
           ),
@@ -122,7 +132,7 @@ class EnhancedNotificationPopup extends StatelessWidget {
     );
   }
 
-  Widget _buildFooter(BuildContext context, NotificationService notificationService) {
+  Widget _buildFooter(BuildContext context, bool isDonor) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -136,8 +146,21 @@ class EnhancedNotificationPopup extends StatelessWidget {
         children: [
           Expanded(
             child: TextButton(
-              onPressed: () {
-                notificationService.markAllNotificationsAsRead(userType);
+              onPressed: () async {
+                // Mark all as read for the current user
+                final uid = FirebaseAuth.instance.currentUser?.uid;
+                if (uid != null) {
+                  final qs = await FirebaseFirestore.instance
+                      .collection('notifications')
+                      .where('userId', isEqualTo: uid)
+                      .where('isRead', isEqualTo: false)
+                      .get();
+                  final batch = FirebaseFirestore.instance.batch();
+                  for (final d in qs.docs) {
+                    batch.update(d.reference, {'isRead': true});
+                  }
+                  await batch.commit();
+                }
                 Get.snackbar(
                   'Success',
                   'All notifications marked as read',
@@ -181,17 +204,7 @@ class EnhancedNotificationPopup extends StatelessWidget {
     );
   }
 
-  int _getNotificationCount(NotificationService notificationService) {
-    return userType == 'donor' 
-        ? notificationService.donorNotificationCount.value 
-        : notificationService.receiverNotificationCount.value;
-  }
-
-  List<Map<String, dynamic>> _getNotifications(NotificationService notificationService) {
-    return userType == 'donor' 
-        ? notificationService.donorNotifications 
-        : notificationService.receiverNotifications;
-  }
+  // Removed old NotificationService helpers
 
   Widget _buildEmptyState() {
     return const Center(
@@ -224,10 +237,10 @@ class EnhancedNotificationPopup extends StatelessWidget {
     );
   }
 
-  void _handleNotificationTap(Map<String, dynamic> notification, NotificationService notificationService) {
+  void _handleNotificationTap(Map<String, dynamic> notification, Future<void> Function(String id) onMarkRead) async {
     // Mark notification as read
     if (notification['id'] != null) {
-      notificationService.markNotificationAsRead(notification['id']);
+      await onMarkRead(notification['id']);
     }
     
     // Handle different notification types with specific actions

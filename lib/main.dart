@@ -9,8 +9,11 @@ import 'package:capstone_project/MarketDonor/home_donor.dart';
 import 'package:capstone_project/FoodReceiver/home_receiver.dart';
 import 'package:capstone_project/config/firebase_config.dart';
 import 'package:capstone_project/services/database_setup_service.dart';
-import 'package:capstone_project/services/notification_service.dart';
-import 'package:capstone_project/services/background_notification_service.dart';
+import 'package:get/get.dart';
+import 'package:capstone_project/services/receiver_notification_service.dart';
+import 'package:capstone_project/services/donor_notification_service.dart';
+import 'package:capstone_project/services/push_token_service.dart';
+import 'package:capstone_project/theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,15 +21,13 @@ void main() async {
   // Initialize Firebase
   await Firebase.initializeApp();
   await FirebaseConfig.initialize();
+  await PushTokenService().initialize();
   
-  // Initialize background notification service
-  await BackgroundNotificationService.initialize();
+  // Initialize notification listeners (free plan, client-only)
+  Get.put(ReceiverNotificationService());
+  Get.put(DonorNotificationService());
   
-  // Set up background message handler
-  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-  
-  // Initialize notification service
-  await NotificationService().initialize();
+  // No global notification initialization required
   
   // Initialize database (optional - for development/testing)
   // await DatabaseSetupService.initializeDatabase();
@@ -41,11 +42,8 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       title: 'FOODO App',
-      debugShowCheckedModeBanner: false, // Add this line to remove DEBUG banner
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.lightTheme,
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {
@@ -68,12 +66,20 @@ class MyApp extends StatelessWidget {
                 
                 if (userSnapshot.hasData && userSnapshot.data!.exists) {
                   final userData = userSnapshot.data!.data() as Map<String, dynamic>;
-                  final userType = userData['userType'] ?? user.displayName;
-                  
+
+                  // read role and displayName separately (safe null-aware fallbacks)
+                  final userType = (userData['userType'] as String?) ?? '';
+                  final displayName = (userData['displayName'] as String?)
+                    ?? (userData['name'] as String?)
+                    ?? user.displayName
+                    ?? user.email?.split('@')[0]
+                    ?? 'User';
+
+                  // Pass displayName into the appropriate home screen
                   if (userType == 'donor') {
-                    return const DonorHome();
+                    return DonorHome(displayName: displayName);
                   } else if (userType == 'receiver') {
-                    return const ReceiverHome();
+                    return ReceiverHome(displayName: displayName);
                   }
                 }
                 

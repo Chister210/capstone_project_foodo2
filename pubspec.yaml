@@ -52,6 +52,7 @@ dependencies:
   socket_io_client: ^2.0.3+1
   flutter_local_notifications: ^18.0.1
   image: ^4.1.7
+  http: ^1.2.2
   
   
 
@@ -109,6 +110,7 @@ flutter:
     - assets/lottie_files/onboarding_donor2.json
     - assets/lottie_files/onboarding_donor3.json
     - assets/lottie_files/food_donated.json
+    - assets/lottie_files/email_verification.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

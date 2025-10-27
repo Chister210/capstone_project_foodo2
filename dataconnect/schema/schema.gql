@@ -1,0 +1,45 @@
+type User @table {
+  username: String!
+  passwordHash: String!
+  userType: String!
+  createdAt: Timestamp!
+  email: String
+  phoneNumber: String
+  organizationName: String
+}
+
+type Address @table {
+  street: String!
+  city: String!
+  state: String!
+  zipCode: String!
+  apartmentNumber: String
+}
+
+type FoodItem @table {
+  name: String!
+  category: String!
+  description: String
+}
+
+type Donation @table {
+  donor: User!
+  pickupAddress: Address!
+  foodItem: FoodItem!
+  quantity: Float!
+  unit: String!
+  expirationDate: Date!
+  pickupBefore: Timestamp!
+  status: String!
+  createdAt: Timestamp!
+  specialInstructions: String
+  isRefrigerated: Boolean
+}
+
+type Claim @table(key: ["charity", "donat"]) {
+  charity: User!
+  donat: Donation!
+  claimDate: Timestamp!
+  status: String!
+  notes: String
+}
