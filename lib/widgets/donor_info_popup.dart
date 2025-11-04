@@ -14,7 +14,6 @@ class DonorInfoPopup extends StatefulWidget {
   final GeoPoint? location;
   final String marketAddress;
   final bool isOnline;
-  final VoidCallback? onGetDirections;
   final VoidCallback? onStartChat;
   final VoidCallback? onShowMoreDetails;
 
@@ -26,7 +25,6 @@ class DonorInfoPopup extends StatefulWidget {
     this.location,
     required this.marketAddress,
     required this.isOnline,
-    this.onGetDirections,
     this.onStartChat,
     this.onShowMoreDetails,
   });
@@ -38,7 +36,7 @@ class DonorInfoPopup extends StatefulWidget {
 class _DonorInfoPopupState extends State<DonorInfoPopup> {
   final DonorStatsService _statsService = Get.put(DonorStatsService());
   Map<String, dynamic>? _donorStats;
-  List<DonationModel> _recentDonations = [];
+  final List<DonationModel> _recentDonations = [];
   bool _isLoading = true;
 
   @override
@@ -446,63 +444,33 @@ class _DonorInfoPopupState extends State<DonorInfoPopup> {
       padding: ResponsiveLayout.getPadding(context),
       child: Column(
         children: [
-          // Get Directions and Start Chat buttons on top
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: widget.onGetDirections,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF22c55e),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 12,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(ResponsiveLayout.getBorderRadius(context) / 2),
-                    ),
-                  ),
-                  icon: Icon(
-                    Icons.directions,
-                    size: ResponsiveLayout.getIconSize(context),
-                  ),
-                  label: Text(
-                    'Get Directions',
-                    style: TextStyle(
-                      fontSize: ResponsiveLayout.getBodyFontSize(context),
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+          // Start Chat button on top
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: widget.onStartChat,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF22c55e),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(ResponsiveLayout.getBorderRadius(context) / 2),
                 ),
               ),
-              SizedBox(width: ResponsiveLayout.getSpacing(context)),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: widget.onStartChat,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF22c55e),
-                    side: const BorderSide(color: Color(0xFF22c55e)),
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 12,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(ResponsiveLayout.getBorderRadius(context) / 2),
-                    ),
-                  ),
-                  icon: Icon(
-                    Icons.chat,
-                    size: ResponsiveLayout.getIconSize(context),
-                  ),
-                  label: Text(
-                    'Start Chat',
-                    style: TextStyle(
-                      fontSize: ResponsiveLayout.getBodyFontSize(context) - 2,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+              icon: Icon(
+                Icons.chat,
+                size: ResponsiveLayout.getIconSize(context),
+              ),
+              label: Text(
+                'Start Chat',
+                style: TextStyle(
+                  fontSize: ResponsiveLayout.getBodyFontSize(context),
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ],
+            ),
           ),
           SizedBox(height: ResponsiveLayout.getSpacing(context)),
           // Show More Details button below

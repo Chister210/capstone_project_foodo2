@@ -4,16 +4,14 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:get/get.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:capstone_project/MarketDonor/home_donor.dart';
 import 'package:capstone_project/FoodReceiver/home_receiver.dart';
 import 'package:capstone_project/config/firebase_config.dart';
-import 'package:capstone_project/services/database_setup_service.dart';
-import 'package:get/get.dart';
 import 'package:capstone_project/services/receiver_notification_service.dart';
 import 'package:capstone_project/services/donor_notification_service.dart';
 import 'package:capstone_project/services/push_token_service.dart';
 import 'package:capstone_project/theme/app_theme.dart';
+import 'package:capstone_project/screens/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,9 +46,7 @@ class MyApp extends StatelessWidget {
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            );
+            return const SplashScreen();
           }
           
           if (snapshot.hasData && snapshot.data != null) {
@@ -59,9 +55,7 @@ class MyApp extends StatelessWidget {
               future: FirebaseFirestore.instance.collection('users').doc(user.uid).get(),
               builder: (context, userSnapshot) {
                 if (userSnapshot.connectionState == ConnectionState.waiting) {
-                  return const Scaffold(
-                    body: Center(child: CircularProgressIndicator()),
-                  );
+                  return const SplashScreen();
                 }
                 
                 if (userSnapshot.hasData && userSnapshot.data!.exists) {

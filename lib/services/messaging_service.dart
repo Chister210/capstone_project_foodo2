@@ -78,7 +78,7 @@ class MessagingService {
             .toList());
   }
 
-  // Get user's chats
+  // Get user's chats (for donors - all chats where they are the donor)
   Stream<List<ChatModel>> getUserChats(String userId) {
     return _firestore
         .collection('chats')
@@ -90,7 +90,7 @@ class MessagingService {
             .toList());
   }
 
-  // Get receiver's chats
+  // Get receiver's chats (for receivers - all chats where they are the receiver)
   Stream<List<ChatModel>> getReceiverChats(String receiverId) {
     return _firestore
         .collection('chats')
@@ -185,6 +185,82 @@ class MessagingService {
     );
   }
 
+  // Delete a message (only sender can delete their own messages)
+  Future<void> deleteMessage(String chatId, String messageId) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+
+      // Get the message to verify ownership
+      final messageDoc = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .get();
+
+      if (!messageDoc.exists) {
+        throw Exception('Message not found');
+      }
+
+      final messageData = messageDoc.data()!;
+      final senderId = messageData['senderId'] as String;
+
+      // Only allow sender to delete their own message
+      if (senderId != user.uid) {
+        throw Exception('You can only delete your own messages');
+      }
+
+      // Delete the message
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .doc(messageId)
+          .delete();
+
+      // If this was the last message, update chat's lastMessage
+      final chatDoc = await _firestore.collection('chats').doc(chatId).get();
+      if (chatDoc.exists) {
+        final chatData = chatDoc.data()!;
+        final lastMessageId = chatData['lastMessageSenderId'] as String?;
+        
+        // If deleted message was the last one, update chat with previous message
+        if (lastMessageId == user.uid) {
+          // Get the most recent remaining message
+          final messagesQuery = await _firestore
+              .collection('chats')
+              .doc(chatId)
+              .collection('messages')
+              .orderBy('timestamp', descending: true)
+              .limit(1)
+              .get();
+
+          if (messagesQuery.docs.isNotEmpty) {
+            final lastMsg = messagesQuery.docs.first;
+            final lastMsgData = lastMsg.data();
+            await _firestore.collection('chats').doc(chatId).update({
+              'lastMessage': lastMsgData['content'] ?? 'No messages',
+              'lastMessageTime': lastMsgData['timestamp'],
+              'lastMessageSenderId': lastMsgData['senderId'] ?? '',
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          } else {
+            // No messages left, set default
+            await _firestore.collection('chats').doc(chatId).update({
+              'lastMessage': 'No messages',
+              'lastMessageTime': FieldValue.serverTimestamp(),
+              'lastMessageSenderId': '',
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          }
+        }
+      }
+    } catch (e) {
+      throw Exception('Failed to delete message: $e');
+    }
+  }
+
   // Get unread message count for user
   Stream<int> getUnreadMessageCount(String userId) {
     return _firestore
@@ -242,7 +318,7 @@ class MessagingService {
         AppNotification(
           userId: recipientId,
           title: 'New Message from $senderName 💬',  // Updated: Include sender's real name in title
-          message: messageContent.length > 50 ? messageContent.substring(0, 50) + '...' : messageContent,  // Simplified: Just the content
+          message: messageContent.length > 50 ? '${messageContent.substring(0, 50)}...' : messageContent,  // Simplified: Just the content
           type: 'new_message',
           data: {
             'chatId': chatId,

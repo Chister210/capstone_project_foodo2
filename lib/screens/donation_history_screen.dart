@@ -52,7 +52,6 @@ class _DonationHistoryScreenState extends State<DonationHistoryScreen>
           tabs: const [
             Tab(text: 'All'),
             Tab(text: 'Available'),
-            Tab(text: 'Claimed'),
             Tab(text: 'Completed'),
           ],
         ),

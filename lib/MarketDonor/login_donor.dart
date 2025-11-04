@@ -5,7 +5,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:lottie/lottie.dart';
 import 'package:capstone_project/MarketDonor/signup_donor.dart';
 import 'package:capstone_project/forgot.dart';
-import 'package:capstone_project/MarketDonor/home_donor.dart';
 import 'package:capstone_project/role_select.dart';
 import 'package:capstone_project/MarketDonor/onboarding_donor.dart'; // Import the OnboardingDonor class
 
@@ -43,7 +42,7 @@ class _DonorLoginState extends State<DonorLogin> {
       
       if (userDoc.exists) {
         final userData = userDoc.data()!;
-        final userType = userData['userType'] ?? userData['displayName'];
+        final userType = userData['userType'] as String?;
         
         if (userType == 'receiver') {
           await FirebaseAuth.instance.signOut();
@@ -52,12 +51,26 @@ class _DonorLoginState extends State<DonorLogin> {
         }
       }
       
-      // Set user as donor
-      await cred.user?.updateDisplayName('donor');
+      // Set user as donor (preserve existing displayName if it exists)
+      final existingDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(cred.user!.uid)
+          .get();
+      final existingDisplayName = existingDoc.exists 
+          ? (existingDoc.data()?['displayName'] as String?)
+          : null;
+      
+      // Only set displayName if it doesn't exist or is null/empty
+      final displayNameToSet = (existingDisplayName != null && 
+                                 existingDisplayName.toString().isNotEmpty &&
+                                 existingDisplayName != 'donor')
+          ? existingDisplayName
+          : (cred.user?.displayName ?? cred.user?.email?.split('@')[0] ?? 'Donor');
+      
       await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
         'uid': cred.user!.uid,
         'email': cred.user!.email,
-        'displayName': 'donor',
+        'displayName': displayNameToSet,
         'userType': 'donor',
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),

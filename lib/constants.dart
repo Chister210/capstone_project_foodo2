@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-// Google API Key
-const String google_api_key = 'aRHUJKBiXWnOZTWYiVkaZIAikcYLUSRF';
+// Google API Key - Should match the key in AndroidManifest.xml and AppDelegate.swift
+// Make sure this key has Directions API enabled in Google Cloud Console
+const String google_api_key = 'AIzaSyCsTChi88TYeupPvBX5z4BAjDDCPWYxL5s';
 
 // App Information
 const String APP_NAME = 'Foodo';

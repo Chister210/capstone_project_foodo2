@@ -8,7 +8,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 import '../models/user_model.dart';
 import '../services/image_compression_service.dart';
+// import '../services/feedback_service.dart'; // Removed - feedback service deleted
+// import '../widgets/feedback_display.dart'; // Removed - feedback display deleted
 import 'donation_history_screen.dart';
+import 'edit_profile_screen.dart';
 import '../role_select.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -191,6 +194,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _navigateToEditProfile() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditProfileScreen(user: _user!),
+      ),
+    );
+    if (result == true) {
+      // Reload user data after editing
+      _loadUserData();
+    }
+  }
+
   Widget _buildProfilePicture() {
     if (_user?.photoUrl != null && _user!.photoUrl!.isNotEmpty) {
       try {
@@ -227,14 +243,147 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildInfoCard(String title, String value, IconData icon) {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: ListTile(
-        leading: Icon(icon, color: const Color(0xFF22c55e)),
-        title: Text(title),
-        subtitle: Text(value),
+  Widget _buildInfoCard(String title, String value, IconData icon, {bool isEditable = true}) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: isEditable ? _navigateToEditProfile : null,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF22c55e).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: const Color(0xFF22c55e), size: 24),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        value,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isEditable)
+                  Icon(Icons.chevron_right, color: Colors.grey[400], size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBeneficiaryTypeCard() {
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance
+          .collection('users')
+          .doc(_user!.id)
+          .get(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox.shrink();
+        
+        final data = snapshot.data!.data() as Map<String, dynamic>?;
+        final beneficiaryType = data?['beneficiaryTypeName'] ?? data?['beneficiaryType'] ?? 'Not set';
+        
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: _navigateToEditProfile,
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF22c55e).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.category, color: Color(0xFF22c55e), size: 24),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Beneficiary Type',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            beneficiaryType.toString(),
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -244,14 +393,74 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required IconData icon,
     required VoidCallback onTap,
   }) {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: ListTile(
-        leading: Icon(icon, color: const Color(0xFF22c55e)),
-        title: Text(title),
-        subtitle: Text(subtitle),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-        onTap: onTap,
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF22c55e).withOpacity(0.1),
+            const Color(0xFF16a34a).withOpacity(0.1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF22c55e).withOpacity(0.3),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF22c55e),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: Colors.white, size: 24),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: Colors.grey[400], size: 24),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -333,14 +542,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    displayName,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                  GestureDetector(
+                    onTap: _navigateToEditProfile,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          displayName,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.edit, color: Colors.white70, size: 18),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 4),
                       Text(
                     _user!.userType == 'donor' ? 'Market Donor' : 'Food Receiver',
@@ -381,16 +600,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 16),
             _buildInfoCard('Email', _user!.email, Icons.email),
             if (_user!.phone != null && _user!.phone!.isNotEmpty)
-              _buildInfoCard('Phone', _user!.phone!, Icons.phone),
+              _buildInfoCard('Phone', _user!.phone!, Icons.phone)
+            else
+              _buildInfoCard('Phone', 'Not set', Icons.phone),
             if (_user!.address != null && _user!.address!.isNotEmpty)
-              _buildInfoCard('Address', _user!.address!, Icons.location_on),
+              _buildInfoCard('Address', _user!.address!, Icons.location_on)
+            else
+              _buildInfoCard('Address', 'Not set', Icons.location_on),
             
             // Donor specific information
             if (_user!.userType == 'donor') ...[
               if (_user!.marketName != null && _user!.marketName!.isNotEmpty)
-                _buildInfoCard('Market Name', _user!.marketName!, Icons.storefront),
+                _buildInfoCard('Market Name', _user!.marketName!, Icons.storefront)
+              else
+                _buildInfoCard('Market Name', 'Not set', Icons.storefront),
               if (_user!.marketAddress != null && _user!.marketAddress!.isNotEmpty)
-                _buildInfoCard('Market Address', _user!.marketAddress!, Icons.business),
+                _buildInfoCard('Market Address', _user!.marketAddress!, Icons.business)
+              else
+                _buildInfoCard('Market Address', 'Not set', Icons.business),
+            ],
+            
+            // Receiver specific information
+            if (_user!.userType == 'receiver') ...[
+              _buildBeneficiaryTypeCard(),
             ],
 
             // Account information
@@ -399,11 +631,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
               'Member Since',
               '${_user!.createdAt.day}/${_user!.createdAt.month}/${_user!.createdAt.year}',
               Icons.calendar_today,
+              isEditable: false,
             ),
             _buildInfoCard(
               'Account Status',
               _user!.isActive ? 'Active' : 'Inactive',
               Icons.check_circle,
+              isEditable: false,
             ),
 
             // Donor specific actions
@@ -414,6 +648,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 subtitle: 'View and manage your donations',
                 icon: Icons.fastfood,
                 onTap: () => Get.to(() => const DonationHistoryScreen()),
+              ),
+              
+              // Feedback Section for Donors
+              const SizedBox(height: 16),
+              Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: ExpansionTile(
+                  leading: const Icon(Icons.rate_review, color: Color(0xFF22c55e)),
+                  title: const Text('Feedback & Ratings'),
+                  subtitle: StreamBuilder<DocumentSnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(_user!.id)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Text('Loading...');
+                      }
+                      final data = snapshot.data!.data() as Map<String, dynamic>?;
+                      final avgRating = data?['averageOverallRating'] ?? 0.0;
+                      final feedbackCount = data?['totalFeedbackCount'] ?? 0;
+                      
+                      if (feedbackCount == 0) {
+                        return const Text('No feedback yet');
+                      }
+                      
+                      return Row(
+                        children: [
+                          const Icon(Icons.star, color: Colors.amber, size: 16),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${avgRating.toStringAsFixed(1)}/5.0',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(width: 8),
+                          Text('($feedbackCount reviews)'),
+                        ],
+                      );
+                    },
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: SizedBox(
+                        height: 300,
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.feedback_outlined, size: 48, color: Colors.grey[400]),
+                              const SizedBox(height: 16),
+                              Text(
+                                'Feedback feature has been removed',
+                                style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
 

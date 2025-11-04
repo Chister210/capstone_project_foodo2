@@ -5,6 +5,9 @@ import '../services/receiver_notification_service.dart';
 import '../services/donor_notification_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../screens/chat_screen.dart';
+import '../screens/receiver_donation_details_screen.dart';
+import '../services/donation_service.dart';
 
 class EnhancedNotificationPopup extends StatelessWidget {
   final String userType;
@@ -123,7 +126,7 @@ class EnhancedNotificationPopup extends StatelessWidget {
               final notification = notifications[index];
               return _NotificationItem(
                 notification: notification,
-                onTap: () => _handleNotificationTap(notification, onMarkRead),
+                onTap: () => _handleNotificationTap(context, notification, onMarkRead),
               );
             },
           ),
@@ -237,82 +240,287 @@ class EnhancedNotificationPopup extends StatelessWidget {
     );
   }
 
-  void _handleNotificationTap(Map<String, dynamic> notification, Future<void> Function(String id) onMarkRead) async {
+  void _handleNotificationTap(BuildContext context, Map<String, dynamic> notification, Future<void> Function(String id) onMarkRead) async {
     // Mark notification as read
     if (notification['id'] != null) {
       await onMarkRead(notification['id']);
     }
     
+    // Close the popup
+    Navigator.pop(context);
+    
     // Handle different notification types with specific actions
-    _handleNotificationAction(notification);
+    await _handleNotificationAction(context, notification);
   }
 
-  void _handleNotificationAction(Map<String, dynamic> notification) {
+  Future<void> _handleNotificationAction(BuildContext context, Map<String, dynamic> notification) async {
     final String type = notification['type'] ?? '';
-    final String title = notification['title'] ?? 'Notification';
-    final String message = notification['message'] ?? '';
+    final Map<String, dynamic> data = notification['data'] is Map
+        ? Map<String, dynamic>.from(notification['data'] as Map)
+        : <String, dynamic>{};
 
-    switch (type) {
-      case 'donation_claimed':
+    try {
+      switch (type) {
+        case 'new_message':
+        case 'message_received':
+          // Navigate to chat screen
+          await _navigateToChat(context, data);
+          break;
+          
+        case 'donation_claimed':
+          // For donors: navigate directly to chat (no popup, just go to messages)
+          if (userType == 'donor') {
+            final chatId = data['chatId'] as String?;
+            if (chatId != null && chatId.isNotEmpty) {
+              await _navigateToChat(context, data);
+            } else {
+              // Fallback: navigate to donation or chat
+              await _navigateToDonationOrChat(context, data, userType);
+            }
+          } else {
+            // For receivers: navigate to donation details or chat
+            await _navigateToDonationOrChat(context, data, userType);
+          }
+          break;
+          
+        case 'new_donation':
+          // For receivers: already on home screen with donations list
+          // No navigation needed, just show snackbar
+          Get.snackbar(
+            'New Donation Available',
+            notification['message'] ?? 'A new donation is available',
+            snackPosition: SnackPosition.TOP,
+            backgroundColor: const Color(0xFF3b82f6),
+            colorText: Colors.white,
+            duration: const Duration(seconds: 2),
+          );
+          break;
+          
+        case 'receiver_confirmed':
+          // Navigate to chat when receiver confirms
+          final chatId = data['chatId'] as String?;
+          if (chatId != null && chatId.isNotEmpty) {
+            await _navigateToChat(context, data);
+          } else {
+            // Fallback to donation details
+            await _navigateToDonationOrChat(context, data, userType);
+          }
+          break;
+          
+        case 'donation_completed':
+          // Navigate to donation details to show feedback option
+          await _navigateToDonationDetails(context, data);
+          break;
+          
+        default:
+          Get.snackbar(
+            notification['title'] ?? 'Notification',
+            notification['message'] ?? '',
+            snackPosition: SnackPosition.TOP,
+            backgroundColor: const Color(0xFF6b7280),
+            colorText: Colors.white,
+            duration: const Duration(seconds: 3),
+          );
+          break;
+      }
+    } catch (e) {
+      print('Error handling notification action: $e');
+      Get.snackbar(
+        'Error',
+        'Failed to open notification: $e',
+        snackPosition: SnackPosition.TOP,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  Future<void> _navigateToChat(BuildContext context, Map<String, dynamic> data) async {
+    final chatId = data['chatId'] as String?;
+    if (chatId == null || chatId.isEmpty) {
+      Get.snackbar(
+        'Error',
+        'Chat ID not found',
+        snackPosition: SnackPosition.TOP,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+      return;
+    }
+
+    try {
+      // Get chat details to determine other user info
+      final chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(chatId)
+          .get();
+
+      if (!chatDoc.exists) {
         Get.snackbar(
-          title,
-          message,
+          'Error',
+          'Chat not found',
           snackPosition: SnackPosition.TOP,
-          backgroundColor: const Color(0xFF22c55e),
+          backgroundColor: Colors.red,
           colorText: Colors.white,
-          duration: const Duration(seconds: 3),
         );
-        // Optional: Navigate to donation details
-        // Get.to(() => DonationDetailsPage(donationId: notification['donationId']));
-        break;
-        
-      case 'new_donation':
+        return;
+      }
+
+      final chatData = chatDoc.data()!;
+      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
+      if (currentUserId == null) {
         Get.snackbar(
-          title,
-          message,
+          'Error',
+          'User not authenticated',
           snackPosition: SnackPosition.TOP,
-          backgroundColor: const Color(0xFF3b82f6),
+          backgroundColor: Colors.red,
           colorText: Colors.white,
-          duration: const Duration(seconds: 3),
         );
-        // Optional: Navigate to donations list
-        // Get.to(() => AvailableDonationsPage());
-        break;
-        
-      case 'donation_completed':
+        return;
+      }
+
+      // Determine other user info
+      String otherUserName;
+      String otherUserType;
+
+      if (chatData['donorId'] == currentUserId) {
+        // Current user is donor, other is receiver
+        otherUserName = chatData['receiverName'] ?? 'Receiver';
+        otherUserType = 'receiver';
+      } else {
+        // Current user is receiver, other is donor
+        otherUserName = chatData['donorName'] ?? 'Donor';
+        otherUserType = 'donor';
+      }
+
+      // Navigate to chat screen
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ChatScreen(
+            chatId: chatId,
+            otherUserName: otherUserName,
+            otherUserType: otherUserType,
+          ),
+        ),
+      );
+    } catch (e) {
+      print('Error navigating to chat: $e');
+      Get.snackbar(
+        'Error',
+        'Failed to open chat: $e',
+        snackPosition: SnackPosition.TOP,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  Future<void> _navigateToDonationOrChat(BuildContext context, Map<String, dynamic> data, String userType) async {
+    final donationId = data['donationId'] as String?;
+    final chatId = data['chatId'] as String?;
+
+    if (donationId == null || donationId.isEmpty) {
+      // If no donationId, try to navigate to chat if available
+      if (chatId != null && chatId.isNotEmpty) {
+        await _navigateToChat(context, data);
+      }
+      return;
+    }
+
+    try {
+      // Get donation details
+      final donationService = DonationService();
+      final donation = await donationService.getDonationById(donationId);
+
+      if (donation == null) {
         Get.snackbar(
-          title,
-          message,
+          'Error',
+          'Donation not found',
+          snackPosition: SnackPosition.TOP,
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+        );
+        return;
+      }
+
+      // For receivers: navigate to donation details
+      if (userType == 'receiver') {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ReceiverDonationDetailsScreen(donation: donation),
+          ),
+        );
+      } else {
+        // For donors: navigate to chat if available, otherwise show snackbar
+        if (chatId != null && chatId.isNotEmpty) {
+          await _navigateToChat(context, {'chatId': chatId});
+        } else {
+          Get.snackbar(
+            'Donation Claimed',
+            'Your donation has been claimed',
+            snackPosition: SnackPosition.TOP,
+            backgroundColor: const Color(0xFF22c55e),
+            colorText: Colors.white,
+            duration: const Duration(seconds: 3),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error navigating to donation: $e');
+      Get.snackbar(
+        'Error',
+        'Failed to open donation: $e',
+        snackPosition: SnackPosition.TOP,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  Future<void> _navigateToDonationDetails(BuildContext context, Map<String, dynamic> data) async {
+    final donationId = data['donationId'] as String?;
+    if (donationId == null || donationId.isEmpty) return;
+
+    try {
+      // Get donation details
+      final donationService = DonationService();
+      final donation = await donationService.getDonationById(donationId);
+
+      if (donation == null) {
+        Get.snackbar(
+          'Error',
+          'Donation not found',
+          snackPosition: SnackPosition.TOP,
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+        );
+        return;
+      }
+
+      // For receivers: navigate to donation details (can submit feedback)
+      if (userType == 'receiver') {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ReceiverDonationDetailsScreen(donation: donation),
+          ),
+        );
+      } else {
+        // For donors: just show message
+        Get.snackbar(
+          'Donation Completed',
+          'Thank you for your donation!',
           snackPosition: SnackPosition.TOP,
           backgroundColor: const Color(0xFF8b5cf6),
           colorText: Colors.white,
           duration: const Duration(seconds: 3),
         );
-        break;
-        
-      case 'message_received':
-        Get.snackbar(
-          title,
-          message,
-          snackPosition: SnackPosition.TOP,
-          backgroundColor: const Color(0xFFf59e0b),
-          colorText: Colors.white,
-          duration: const Duration(seconds: 3),
-        );
-        // Optional: Navigate to chat
-        // Get.to(() => ChatPage(chatId: notification['chatId']));
-        break;
-        
-      default:
-        Get.snackbar(
-          title,
-          message,
-          snackPosition: SnackPosition.TOP,
-          backgroundColor: const Color(0xFF6b7280),
-          colorText: Colors.white,
-          duration: const Duration(seconds: 3),
-        );
-        break;
+      }
+    } catch (e) {
+      print('Error navigating to donation details: $e');
     }
   }
 }

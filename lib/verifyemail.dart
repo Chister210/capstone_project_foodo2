@@ -22,14 +22,14 @@ class _VerifyState extends State<Verify> {
     super.initState();
   }
 
-  sendverifylink() async {
+  Future<void> sendverifylink() async {
     final user = FirebaseAuth.instance.currentUser!;
     await user.sendEmailVerification().then((value) => {
       Get.snackbar('Verification link sent', 'Please check your email',margin: EdgeInsets.all(30),snackPosition: SnackPosition.BOTTOM)
     });
   }
 
-  reload()async{
+  Future<void> reload()async{
     await FirebaseAuth.instance.currentUser!.reload().then((value) => {
       if(FirebaseAuth.instance.currentUser!.emailVerified){
         Get.offAll(Wrapper())

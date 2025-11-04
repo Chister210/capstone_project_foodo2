@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:location/location.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:location/location.dart' hide LocationAccuracy;
 import 'dart:convert';
 import '../services/location_tracking_service.dart';
 import '../services/donation_service.dart';
@@ -16,6 +19,7 @@ import '../screens/market_details_screen.dart';
 import 'dart:async';
 import 'package:get/get.dart';
 import '../services/messaging_service.dart';
+import '../constants.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -27,13 +31,14 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   GoogleMapController? _mapController;
   LocationData? _currentLocation;
-  Location _location = Location();
-  Set<Marker> _markers = {};
-  Set<Polyline> _polylines = {};
+  final Location _location = Location();
+  final Set<Marker> _markers = {};
+  final Set<Polyline> _polylines = {};
   
   final LocationTrackingService _locationService = LocationTrackingService();
   final DonationService _donationService = DonationService();
   final DonorStatsService _donorStatsService = Get.put(DonorStatsService());
+  final MessagingService _messagingService = MessagingService();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   
   bool _isTracking = false;
@@ -311,6 +316,251 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  Future<void> _getDirectionsToDonor(GeoPoint location, String donorName) async {
+    try {
+      // Get current location first
+      if (_currentLocation == null) {
+        // Try to get current location using Location package
+        try {
+          bool serviceEnabled = await _location.serviceEnabled();
+          if (!serviceEnabled) {
+            serviceEnabled = await _location.requestService();
+            if (!serviceEnabled) {
+              Get.snackbar(
+                'Error',
+                'Location services are disabled. Please enable them in settings.',
+                backgroundColor: Colors.orange,
+                colorText: Colors.white,
+                duration: const Duration(seconds: 3),
+              );
+              return;
+            }
+          }
+
+          PermissionStatus permissionGranted = await _location.hasPermission();
+          if (permissionGranted == PermissionStatus.denied) {
+            permissionGranted = await _location.requestPermission();
+            if (permissionGranted != PermissionStatus.granted) {
+              Get.snackbar(
+                'Error',
+                'Location permission denied. Please grant location permission.',
+                backgroundColor: Colors.orange,
+                colorText: Colors.white,
+                duration: const Duration(seconds: 3),
+              );
+              return;
+            }
+          }
+
+          _currentLocation = await _location.getLocation();
+        } catch (e) {
+          Get.snackbar(
+            'Error',
+            'Unable to get your current location. Please enable location services.',
+            backgroundColor: Colors.orange,
+            colorText: Colors.white,
+            duration: const Duration(seconds: 3),
+          );
+          return;
+        }
+      }
+
+      if (_currentLocation == null) {
+        Get.snackbar(
+          'Error',
+          'Current location not available',
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+        );
+        return;
+      }
+
+      final double destLat = location.latitude;
+      final double destLng = location.longitude;
+      final LatLng destination = LatLng(destLat, destLng);
+      final LatLng origin = LatLng(
+        _currentLocation!.latitude!,
+        _currentLocation!.longitude!,
+      );
+
+      // Show loading indicator
+      Get.snackbar(
+        'Loading',
+        'Getting directions to $donorName...',
+        backgroundColor: Colors.blue,
+        colorText: Colors.white,
+        duration: const Duration(seconds: 2),
+      );
+
+      // Draw direction line on the map
+      try {
+        await _drawDirectionLine(origin, destination);
+      } catch (e) {
+        print('❌ Error in _drawDirectionLine: $e');
+        String errorMessage = 'Failed to get directions';
+        if (e.toString().contains('API key')) {
+          errorMessage = 'Google Maps API key issue. Please configure your API key.';
+        } else if (e.toString().contains('quota') || e.toString().contains('QUERY_LIMIT')) {
+          errorMessage = 'Directions API quota exceeded. Please try again later.';
+        } else if (e.toString().contains('route') || e.toString().contains('No route')) {
+          errorMessage = 'No route found between locations.';
+        } else if (e.toString().contains('timeout') || e.toString().contains('connection')) {
+          errorMessage = 'Connection timeout. Please check your internet and try again.';
+        } else {
+          errorMessage = e.toString().replaceAll('Exception: ', '');
+        }
+        
+        Get.snackbar(
+          'Directions Unavailable',
+          errorMessage,
+          backgroundColor: Colors.orange,
+          colorText: Colors.white,
+          duration: const Duration(seconds: 5),
+          snackPosition: SnackPosition.BOTTOM,
+        );
+        return;
+      }
+
+      // Move camera to show both locations with the route
+      if (_mapController != null) {
+        final bounds = LatLngBounds(
+          southwest: LatLng(
+            origin.latitude < destination.latitude
+                ? origin.latitude
+                : destination.latitude,
+            origin.longitude < destination.longitude
+                ? origin.longitude
+                : destination.longitude,
+          ),
+          northeast: LatLng(
+            origin.latitude > destination.latitude
+                ? origin.latitude
+                : destination.latitude,
+            origin.longitude > destination.longitude
+                ? origin.longitude
+                : destination.longitude,
+          ),
+        );
+
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(bounds, 100.0),
+        );
+      }
+
+      // Show success message
+      Get.snackbar(
+        'Success',
+        'Directions to $donorName shown on map',
+        backgroundColor: const Color(0xFF22c55e),
+        colorText: Colors.white,
+        duration: const Duration(seconds: 2),
+      );
+    } catch (e) {
+      Get.snackbar(
+        'Error',
+        'Failed to get directions: ${e.toString()}',
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  Future<void> _startChatWithDonor(String donorId, String donorName) async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) {
+        Get.snackbar(
+          'Error',
+          'You must be logged in to start a chat',
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+        );
+        return;
+      }
+
+      // Get current user data
+      final currentUserDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .get();
+      
+      if (!currentUserDoc.exists) {
+        Get.snackbar(
+          'Error',
+          'User data not found',
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+        );
+        return;
+      }
+
+      final currentUserData = currentUserDoc.data()!;
+      final receiverName = currentUserData['displayName'] ?? 
+                          currentUser.displayName ?? 
+                          currentUser.email?.split('@')[0] ?? 
+                          'User';
+      
+      // Create a general chat ID (without donationId)
+      final chatId = '${donorId}_${currentUser.uid}_general';
+      
+      // Check if chat already exists
+      final chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(chatId)
+          .get();
+      
+      String finalChatId = chatId;
+      
+      if (!chatDoc.exists) {
+        // Create new general chat
+        final chat = {
+          'id': chatId,
+          'donorId': donorId,
+          'receiverId': currentUser.uid,
+          'donorName': donorName,
+          'receiverName': receiverName,
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+          'lastMessage': 'Chat started',
+          'lastMessageTime': FieldValue.serverTimestamp(),
+          'lastMessageSenderId': currentUser.uid,
+          'donorActive': false,
+          'receiverActive': true,
+          'donationId': null, // General chat without specific donation
+        };
+        
+        await FirebaseFirestore.instance
+            .collection('chats')
+            .doc(chatId)
+            .set(chat);
+        
+        finalChatId = chatId;
+      } else {
+        finalChatId = chatDoc.id;
+      }
+
+      // Navigate to chat screen
+      Navigator.of(context).pop(); // Close the popup first
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ChatScreen(
+            chatId: finalChatId,
+            otherUserName: donorName,
+            otherUserType: 'donor',
+          ),
+        ),
+      );
+    } catch (e) {
+      Get.snackbar(
+        'Error',
+        'Failed to start chat: $e',
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+    }
+  }
+
   void _showDonorInfoPopup({
     required String donorId,
     required String donorName,
@@ -362,7 +612,7 @@ class _MapScreenState extends State<MapScreen> {
         return {'rating': rating, 'comment': comment, 'reviewer': reviewer};
       }).toList();
 
-      // Show DonorInfoPopup with all details
+      // Show DonorInfoPopup with "Go to Market" button (Shopee/Lazada style)
       showDialog(
         context: context,
         builder: (context) => DonorInfoPopup(
@@ -372,16 +622,12 @@ class _MapScreenState extends State<MapScreen> {
           location: GeoPoint(location.latitude, location.longitude),
           marketAddress: marketAddress,
           isOnline: isOnline,
-          onGetDirections: () {
-            Navigator.of(context).pop();
-            _showDirectionsToDonor(location, donorName);
-          },
           onStartChat: () {
-            Navigator.of(context).pop();
             _startChatWithDonor(donorId, donorName);
           },
           onShowMoreDetails: () {
             Navigator.of(context).pop();
+            // Navigate to Market Details Screen showing statistics and feedback
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -600,43 +846,6 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  void _startChatWithDonor(String donorId, String donorName) async {
-  try {
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('You must be logged in to start a chat')),
-      );
-      return;
-    }
-
-    // Create the chat using MessagingService
-    final messagingService = MessagingService();  // Add this import if not already: import '../services/messaging_service.dart';
-    final chatId = await messagingService.createChat(
-      donationId: '',  // No specific donation, so use empty string or a default
-      donorId: donorId,
-      receiverId: currentUser.uid,
-      donorName: donorName,
-      receiverName: currentUser.displayName ?? currentUser.email?.split('@')[0] ?? 'Receiver',
-    );
-
-    // Navigate to ChatScreen with correct parameters
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ChatScreen(
-          chatId: chatId,              // Now provided
-          otherUserName: donorName,    // Matches constructor
-          otherUserType: 'donor',      // Since chatting with a donor
-        ),
-      ),
-    );
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Error starting chat: $e')),
-    );
-  }
-}
 
   // Fixed: moved market donor markers logic into a proper async function
   Future<void> _loadMarketDonorMarkers() async {
@@ -655,7 +864,9 @@ class _MapScreenState extends State<MapScreen> {
         final marketName = data['marketName'] ?? 'Market';
         final marketAddress = data['marketAddress'] ?? '';
         final donorEmail = data['email'] ?? '';
-        final donorName = data['displayName'] ??
+        // Fetch actual name: name field -> displayName -> email prefix -> default
+        final donorName = data['name'] ?? 
+            data['displayName'] ?? 
             (donorEmail.isNotEmpty ? donorEmail.split('@')[0] : 'Donor');
         final phoneNumber = data['phoneNumber'] ?? 'Not provided';
         final marketHours = data['marketHours'] ?? 'Not specified';
@@ -719,112 +930,47 @@ class _MapScreenState extends State<MapScreen> {
     required String marketDescription,
     required LatLng marketLocation,
     required String donorId,
-  }) {
+  }) async {
+    // Get online status
+    bool isOnline = false;
+    try {
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(donorId).get();
+      if (userDoc.exists) {
+        final userData = userDoc.data();
+        isOnline = userData?['isOnline'] ?? false;
+      }
+    } catch (e) {
+      print('Error getting online status: $e');
+    }
+
+    // Show DonorInfoPopup with "Go to Market" button (Shopee/Lazada style)
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF22c55e).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.storefront_rounded,
-                color: Color(0xFF22c55e),
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                marketName,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF22c55e),
-                  fontSize: 18,
-                ),
+      builder: (context) => DonorInfoPopup(
+        donorId: donorId,
+        donorName: donorName,
+        donorEmail: donorEmail,
+        location: GeoPoint(marketLocation.latitude, marketLocation.longitude),
+        marketAddress: marketAddress,
+        isOnline: isOnline,
+        onStartChat: () {
+          _startChatWithDonor(donorId, donorName);
+        },
+        onShowMoreDetails: () {
+          Navigator.of(context).pop();
+          // Navigate to Market Details Screen showing statistics and feedback
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => MarketDetailsScreen(
+                donorId: donorId,
+                donorName: donorName,
+                marketAddress: marketAddress,
+                isOnline: isOnline,
               ),
             ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Market Description
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.info_outline, color: Colors.blue, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        marketDescription,
-                        style: const TextStyle(
-                          color: Colors.blue,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-              
-              _buildInfoSection(
-                icon: Icons.location_on_rounded,
-                title: 'Location Details',
-                children: [
-                  _buildInfoRow('Address', marketAddress.isNotEmpty ? marketAddress : 'Not specified'),
-                  _buildInfoRow('Hours', marketHours.isNotEmpty ? marketHours : 'Not specified'),
-                ],
-              ),
-              
-              const SizedBox(height: 16),
-              
-              _buildInfoSection(
-                icon: Icons.person_rounded,
-                title: 'Donor Information',
-                children: [
-                  _buildInfoRow('Name', donorName),
-                  _buildInfoRow('Email', donorEmail),
-                  _buildInfoRow('Phone', phoneNumber.isNotEmpty ? phoneNumber : 'Not provided'),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              _showDirectionsToMarket(marketLocation, marketName);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF22c55e),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            icon: const Icon(Icons.directions, size: 18),
-            label: const Text('Get Directions'),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -868,50 +1014,212 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _drawDirectionLine(LatLng start, LatLng end) async {
     try {
+      print('📍 Drawing direction line from ${start.latitude},${start.longitude} to ${end.latitude},${end.longitude}');
+      
       // Use Google Directions API to get route
       final directions = await _getDirections(start, end);
       
-      if (directions != null && (directions['routes'] as List).isNotEmpty) {
-        final route = directions['routes'][0];
-        final points = route['overview_polyline']['points'];
-        final decodedPoints = _decodePolyline(points);
-        
-        setState(() {
-          _polylines.clear();
-          _polylines.add(
-            Polyline(
-              polylineId: const PolylineId('direction_line'),
-              points: decodedPoints,
-              color: const Color(0xFF22c55e),
-              width: 4,
-              patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-            ),
-          );
-        });
+      if (directions == null) {
+        print('❌ Directions API returned null');
+        throw Exception('Failed to get directions from API');
       }
-    } catch (e) {
+      
+      print('📊 Directions response: ${directions['status']}');
+      
+      if (directions['status'] != 'OK') {
+        print('❌ Directions API status: ${directions['status']}');
+        print('❌ Error message: ${directions['error_message'] ?? 'No error message'}');
+        throw Exception('Directions API returned: ${directions['status']}');
+      }
+      
+      if ((directions['routes'] as List).isEmpty) {
+        print('❌ No routes found in directions response');
+        throw Exception('No routes found');
+      }
+      
+      final route = directions['routes'][0];
+      final overviewPolyline = route['overview_polyline'];
+      
+      if (overviewPolyline == null || overviewPolyline['points'] == null) {
+        print('❌ No polyline points found in route');
+        throw Exception('No polyline data in route');
+      }
+      
+      final points = overviewPolyline['points'] as String;
+      print('📈 Polyline string length: ${points.length}');
+      
+      final decodedPoints = _decodePolyline(points);
+      print('✅ Decoded ${decodedPoints.length} points from polyline');
+      
+      if (decodedPoints.isEmpty) {
+        print('❌ Decoded points list is empty');
+        throw Exception('Failed to decode polyline points');
+      }
+      
+      setState(() {
+        _polylines.clear();
+        _polylines.add(
+          Polyline(
+            polylineId: const PolylineId('direction_line'),
+            points: decodedPoints,
+            color: Colors.blue, // Changed to blue for better visibility
+            width: 6, // Increased width
+            geodesic: true,
+            jointType: JointType.round,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+          ),
+        );
+      });
+      
+      print('✅ Polyline added to map with ${decodedPoints.length} points');
+      print('✅ Polyline bounds: ${decodedPoints.first} to ${decodedPoints.last}');
+      
+      // Force map update by moving camera slightly then back
+      if (_mapController != null && decodedPoints.isNotEmpty) {
+        // Calculate bounds of the route
+        double minLat = decodedPoints.first.latitude;
+        double maxLat = decodedPoints.first.latitude;
+        double minLng = decodedPoints.first.longitude;
+        double maxLng = decodedPoints.first.longitude;
+        
+        for (final point in decodedPoints) {
+          if (point.latitude < minLat) minLat = point.latitude;
+          if (point.latitude > maxLat) maxLat = point.latitude;
+          if (point.longitude < minLng) minLng = point.longitude;
+          if (point.longitude > maxLng) maxLng = point.longitude;
+        }
+        
+        // Add padding
+        final latPadding = (maxLat - minLat) * 0.1;
+        final lngPadding = (maxLng - minLng) * 0.1;
+        
+        final bounds = LatLngBounds(
+          southwest: LatLng(minLat - latPadding, minLng - lngPadding),
+          northeast: LatLng(maxLat + latPadding, maxLng + lngPadding),
+        );
+        
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(bounds, 100.0),
+        );
+        
+        print('✅ Camera moved to show route bounds');
+      }
+    } catch (e, stackTrace) {
       print('❌ Error drawing direction line: $e');
+      print('❌ Stack trace: $stackTrace');
+      rethrow;
     }
   }
 
   Future<Map<String, dynamic>?> _getDirections(LatLng start, LatLng end) async {
     try {
-      // Note: You'll need to add your Google Maps API key here
-      const apiKey = 'AIzaSyCsTChi88TYeupPvBX5z4BAjDDCPWYxL5s'; // Replace with your actual API key
+      // Validate coordinates first
+      if (start.latitude.isNaN || start.longitude.isNaN || 
+          end.latitude.isNaN || end.longitude.isNaN) {
+        print('❌ Invalid coordinates: start=(${start.latitude}, ${start.longitude}), end=(${end.latitude}, ${end.longitude})');
+        throw Exception('Invalid location coordinates');
+      }
+      
+      if (start.latitude.abs() > 90 || start.longitude.abs() > 180 ||
+          end.latitude.abs() > 90 || end.longitude.abs() > 180) {
+        print('❌ Coordinates out of bounds: start=(${start.latitude}, ${start.longitude}), end=(${end.latitude}, ${end.longitude})');
+        throw Exception('Coordinates are out of valid range');
+      }
+      
+      // Use API key from constants
+      final apiKey = google_api_key;
+      
+      if (apiKey.isEmpty || apiKey == 'YOUR_GOOGLE_MAPS_API_KEY') {
+        print('❌ Google API key is not configured');
+        throw Exception('Google Maps API key is not configured. Please set up your API key.');
+      }
+      
+      print('🔑 Using API key: ${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 4)}');
+      
       final url = 'https://maps.googleapis.com/maps/api/directions/json?'
           'origin=${start.latitude},${start.longitude}&'
           'destination=${end.latitude},${end.longitude}&'
-          'key=$apiKey';
+          'key=$apiKey&'
+          'mode=driving';
       
-      final response = await http.get(Uri.parse(url));
+      print('🗺️ Requesting directions from (${start.latitude}, ${start.longitude}) to (${end.latitude}, ${end.longitude})');
+      print('🗺️ API URL (key hidden): ${url.replaceAll(apiKey, 'API_KEY_HIDDEN')}');
+      
+      final response = await http.get(Uri.parse(url)).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw Exception('Directions API request timed out. Please check your internet connection.');
+        },
+      );
+      
+      print('🗺️ Directions API response status: ${response.statusCode}');
+      print('🗺️ Response headers: ${response.headers}');
       
       if (response.statusCode == 200) {
-        return json.decode(response.body) as Map<String, dynamic>;
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final status = data['status'] as String?;
+        print('🗺️ API Status: $status');
+        print('🗺️ Routes count: ${(data['routes'] as List?)?.length ?? 0}');
+        
+        // Log the full response for debugging (first 500 chars to avoid spam)
+        final responsePreview = response.body.length > 500 
+            ? '${response.body.substring(0, 500)}...' 
+            : response.body;
+        print('🗺️ API Response preview: $responsePreview');
+        
+        if (status == 'OK') {
+          if ((data['routes'] as List).isNotEmpty) {
+            print('✅ Directions received successfully');
+            return data;
+          } else {
+            print('⚠️ Directions API returned OK but no routes');
+            print('⚠️ Full response: ${response.body}');
+            throw Exception('No route found between the selected locations.');
+          }
+        } else {
+          final errorMessage = data['error_message'] as String? ?? 'Unknown error';
+          print('⚠️ Directions API returned: $status');
+          print('⚠️ Error message: $errorMessage');
+          print('⚠️ Full API response: ${response.body}');
+          
+          // Provide user-friendly error messages
+          String userMessage;
+          switch (status) {
+            case 'REQUEST_DENIED':
+              userMessage = 'Directions API access denied. The API key may be invalid, restricted, or Directions API is not enabled. Check your Google Cloud Console settings.';
+              break;
+            case 'OVER_QUERY_LIMIT':
+              userMessage = 'Directions API quota exceeded. Please check your billing or try again later.';
+              break;
+            case 'ZERO_RESULTS':
+              userMessage = 'No route found between the selected locations.';
+              break;
+            case 'NOT_FOUND':
+              userMessage = 'Location not found. Please check the destination address.';
+              break;
+            case 'INVALID_REQUEST':
+              userMessage = 'Invalid request. Please check the coordinates and try again.';
+              break;
+            default:
+              userMessage = 'Directions API error ($status): $errorMessage';
+          }
+          throw Exception(userMessage);
+        }
+      } else {
+        print('❌ Directions API HTTP error: ${response.statusCode}');
+        print('❌ Response body: ${response.body}');
+        throw Exception('Failed to connect to Directions API. HTTP ${response.statusCode}. Please check your API key and internet connection.');
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ Error getting directions: $e');
+      print('❌ Stack trace: $stackTrace');
+      // Re-throw with a more user-friendly message if it's already an Exception
+      if (e is Exception) {
+        rethrow;
+      }
+      throw Exception('Failed to get directions: ${e.toString()}');
     }
-    return null;
   }
 
   List<LatLng> _decodePolyline(String polyline) {

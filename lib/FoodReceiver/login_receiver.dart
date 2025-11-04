@@ -52,7 +52,7 @@ class _ReceiverLoginState extends State<ReceiverLogin> {
       
       if (userDoc.exists) {
         final userData = userDoc.data()!;
-        final userType = userData['userType'] ?? userData['displayName'];
+        final userType = userData['userType'] as String?;
         
         if (userType == 'donor') {
           await FirebaseAuth.instance.signOut();
@@ -61,12 +61,26 @@ class _ReceiverLoginState extends State<ReceiverLogin> {
         }
       }
       
-      // Set user as receiver
-      await cred.user?.updateDisplayName('receiver');
+      // Set user as receiver (preserve existing displayName if it exists)
+      final existingDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(cred.user!.uid)
+          .get();
+      final existingDisplayName = existingDoc.exists 
+          ? (existingDoc.data()?['displayName'] as String?)
+          : null;
+      
+      // Only set displayName if it doesn't exist or is null/empty
+      final displayNameToSet = (existingDisplayName != null && 
+                                 existingDisplayName.toString().isNotEmpty &&
+                                 existingDisplayName != 'receiver')
+          ? existingDisplayName
+          : (cred.user?.displayName ?? cred.user?.email?.split('@')[0] ?? 'Receiver');
+      
       await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
         'uid': cred.user!.uid,
         'email': cred.user!.email,
-        'displayName': 'receiver',
+        'displayName': displayNameToSet,
         'userType': 'receiver',
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -119,7 +133,7 @@ class _ReceiverLoginState extends State<ReceiverLogin> {
       
       if (userDoc.exists) {
         final userData = userDoc.data()!;
-        final userType = userData['userType'] ?? userData['displayName'];
+        final userType = userData['userType'] as String?;
         
         if (userType == 'donor') {
           await FirebaseAuth.instance.signOut();
@@ -128,12 +142,28 @@ class _ReceiverLoginState extends State<ReceiverLogin> {
         }
       }
       
-      // Set user as receiver
-      await userCredential.user?.updateDisplayName('receiver');
+      // Set user as receiver (preserve existing displayName if it exists)
+      final existingDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user!.uid)
+          .get();
+      final existingDisplayName = existingDoc.exists 
+          ? (existingDoc.data()?['displayName'] as String?)
+          : null;
+      
+      // Use Google display name if available, otherwise preserve existing or use email
+      final displayNameToSet = (googleUser.displayName != null && googleUser.displayName!.isNotEmpty)
+          ? googleUser.displayName
+          : ((existingDisplayName != null && 
+               existingDisplayName.toString().isNotEmpty &&
+               existingDisplayName != 'receiver')
+              ? existingDisplayName
+              : (userCredential.user?.email?.split('@')[0] ?? 'Receiver'));
+      
       await FirebaseFirestore.instance.collection('users').doc(userCredential.user!.uid).set({
         'uid': userCredential.user!.uid,
-        'email': userCredential.user!.email,
-        'displayName': 'receiver',
+        'email': userCredential.user?.email ?? googleUser.email,
+        'displayName': displayNameToSet,
         'userType': 'receiver',
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),

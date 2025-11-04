@@ -6,6 +6,7 @@ import '../models/user_model.dart';
 import 'app_notification.dart';
 import 'image_compression_service.dart';
 import 'messaging_service.dart';
+import 'certificate_service.dart';
 
 class DonationService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -37,6 +38,11 @@ class DonationService {
       // Convert image to base64 string for local storage
       final imageBase64 = await _convertImageToBase64(imageFile);
 
+      // Parse quantity to integer if available
+      final totalQuantityInt = quantity != null 
+          ? DonationModel.parseQuantityString(quantity) 
+          : null;
+      
       // Create donation document
       final donation = DonationModel(
         id: '', // Will be set by Firestore
@@ -56,6 +62,10 @@ class DonationService {
         foodType: foodType,
         foodCategory: foodCategory,
         quantity: quantity,
+        totalQuantity: totalQuantityInt,
+        claimedQuantity: 0,
+        remainingQuantity: totalQuantityInt,
+        quantityClaims: null,
         specification: specification,
         maxRecipients: maxRecipients,
         allergens: allergens,
@@ -125,15 +135,56 @@ class DonationService {
   }
 
   // Get all available donations (for receivers)
+  // Includes donations that are available OR have remaining quantity (partial claims)
   Stream<List<DonationModel>> getAvailableDonations() {
     return _firestore
         .collection('donations')
         .where('status', isEqualTo: 'available')
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => DonationModel.fromFirestore(doc))
-            .toList());
+        .asyncExpand((availableSnapshot) async* {
+          // Get all donations with remaining quantity
+          final partialSnapshot = await _firestore
+              .collection('donations')
+              .where('remainingQuantity', isGreaterThan: 0)
+              .get();
+          
+          final allDonations = <String, DonationModel>{};
+          
+          // Add available donations
+          for (final doc in availableSnapshot.docs) {
+            final donation = DonationModel.fromFirestore(doc);
+            allDonations[donation.id] = donation;
+          }
+          
+          // Add donations with remaining quantity (even if status is 'claimed')
+          for (final doc in partialSnapshot.docs) {
+            final donation = DonationModel.fromFirestore(doc);
+            // Add if has remaining quantity and not completed
+            if ((donation.remainingQuantity ?? 0) > 0 &&
+                donation.status != 'completed') {
+              allDonations[donation.id] = donation;
+            }
+          }
+          
+          // Filter and sort
+          final filtered = allDonations.values.where((donation) {
+            // Show if status is available
+            if (donation.status == 'available') return true;
+            
+            // Show if has remaining quantity and not completed
+            if (donation.totalQuantity != null) {
+              final remaining = donation.remainingQuantity ?? donation.totalQuantity ?? 0;
+              return remaining > 0 && donation.status != 'completed';
+            }
+            
+            // For donations without quantity tracking, only show if available
+            return donation.status == 'available';
+          }).toList();
+          
+          filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          yield filtered;
+        });
   }
 
   // Get donations by donor (for donors)
@@ -220,14 +271,33 @@ class DonationService {
     }
   }
 
-  // Claim a donation
-  Future<void> claimDonation(String donationId, String receiverId) async {
+  // Claim a donation (with optional quantity for partial claims)
+  Future<void> claimDonation(String donationId, String receiverId, {int? claimQuantity}) async {
     try {
       // Get donation details
       final donationDoc = await _firestore.collection('donations').doc(donationId).get();
       if (!donationDoc.exists) throw Exception('Donation not found');
       
       final donation = DonationModel.fromFirestore(donationDoc);
+      
+      // Check if donation has quantity-based claiming
+      final hasQuantity = donation.totalQuantity != null && donation.totalQuantity! > 0;
+      
+      // If no quantity specified but donation has quantity, require quantity selection
+      if (hasQuantity && claimQuantity == null) {
+        throw Exception('Please specify the quantity you want to claim');
+      }
+      
+      // If quantity specified, validate it
+      if (hasQuantity && claimQuantity != null) {
+        final remaining = donation.remainingQuantity ?? donation.totalQuantity ?? 0;
+        if (claimQuantity <= 0) {
+          throw Exception('Quantity must be greater than 0');
+        }
+        if (claimQuantity > remaining) {
+          throw Exception('Requested quantity ($claimQuantity) exceeds available quantity ($remaining)');
+        }
+      }
       
       // Get receiver details
       final receiverDoc = await _firestore.collection('users').doc(receiverId).get();
@@ -243,89 +313,250 @@ class DonationService {
       final donorData = donorDoc.data()!;
       final donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
       
-      // Create chat between donor and receiver
+      // Calculate new quantities
+      final currentClaimedQuantity = donation.claimedQuantity;
+      final currentRemainingQuantity = donation.remainingQuantity ?? donation.totalQuantity ?? 0;
+      final newClaimedQuantity = hasQuantity && claimQuantity != null
+          ? currentClaimedQuantity + claimQuantity
+          : currentClaimedQuantity;
+      final newRemainingQuantity = hasQuantity && claimQuantity != null
+          ? currentRemainingQuantity - claimQuantity
+          : currentRemainingQuantity;
+      
+      // Update quantity claims map
+      final currentClaims = Map<String, int>.from(donation.quantityClaims ?? {});
+      final isAdditionalClaim = hasQuantity && claimQuantity != null && currentClaims.containsKey(receiverId);
+      
+      if (hasQuantity && claimQuantity != null) {
+        currentClaims[receiverId] = (currentClaims[receiverId] ?? 0) + claimQuantity;
+      }
+      
+      // Determine if donation should be marked as claimed (only when remaining is 0)
+      final isFullyClaimed = hasQuantity && newRemainingQuantity <= 0;
+      final newStatus = isFullyClaimed ? 'claimed' : donation.status;
+      
+      // Create chat between donor and receiver (each receiver-donor pair gets unique chat)
+      // Check if chat already exists for this specific receiver-donor pair
       final MessagingService messagingService = MessagingService();
-      final chatId = await messagingService.createChat(
-        donationId: donationId,
-        donorId: donation.donorId,
-        receiverId: receiverId,
-        donorName: donorName,
-        receiverName: receiverName,
+      final expectedChatId = '${donation.donorId}_${receiverId}_$donationId';
+      
+      // Check if chat document exists
+      final chatDoc = await _firestore.collection('chats').doc(expectedChatId).get();
+      String? chatId;
+      
+      if (!chatDoc.exists) {
+        // Create new chat for this specific receiver-donor pair
+        chatId = await messagingService.createChat(
+          donationId: donationId,
+          donorId: donation.donorId,
+          receiverId: receiverId,
+          donorName: donorName,
+          receiverName: receiverName,
+        );
+      } else {
+        // Chat already exists for this pair
+        chatId = expectedChatId;
+      }
+      
+      // If user is claiming additional quantity, reset their confirmation status
+      // so they need to confirm the new transaction separately
+      final currentConfirmations = Map<String, bool>.from(
+        (donationDoc.data()?['receiverConfirmations'] as Map? ?? {}).map((k, v) => MapEntry(k.toString(), v == true))
       );
       
-      // Update donation with chat ID and claim status
-      await _firestore.collection('donations').doc(donationId).update({
-        'status': 'claimed',
-        'claimedBy': receiverId,
-        'claimedAt': FieldValue.serverTimestamp(),
-        'chatId': chatId,
+      // Prepare update data
+      final updateData = <String, dynamic>{
+        if (hasQuantity) 'claimedQuantity': newClaimedQuantity,
+        if (hasQuantity) 'remainingQuantity': newRemainingQuantity,
+        if (hasQuantity) 'quantityClaims': currentClaims,
+        if (isFullyClaimed) 'status': 'claimed',
+        if (donation.claimedBy == null || donation.claimedBy!.isEmpty) 'claimedBy': receiverId, // Set first claimer
+        if (donation.claimedAt == null) 'claimedAt': FieldValue.serverTimestamp(),
+        // Store chatId only if it's the first claim (for backward compatibility)
+        if (donation.chatId == null) 'chatId': chatId,
         'updatedAt': FieldValue.serverTimestamp(),
-      });
+      };
       
-      // Notify donor about claim (only donor should be notified on claim)
+      // Reset confirmation for this receiver if they're claiming additional quantity
+      // This ensures they need to confirm the new transaction separately
+      if (isAdditionalClaim) {
+        // Reset this user's confirmation status for the new claim
+        currentConfirmations[receiverId] = false;
+        updateData['receiverConfirmations'] = currentConfirmations;
+        // Also reset the overall receiverConfirmed flag if all confirmations are false
+        if (currentConfirmations.values.every((confirmed) => !confirmed)) {
+          updateData['receiverConfirmed'] = false;
+        }
+      }
+      
+      // Update donation with quantities and status
+      await _firestore.collection('donations').doc(donationId).update(updateData);
+      
+      // Notify donor about claim
+      final quantityText = hasQuantity && claimQuantity != null
+          ? '$claimQuantity of ${donation.totalQuantity}'
+          : 'all';
+      final remainingText = hasQuantity && newRemainingQuantity > 0
+          ? ' ($newRemainingQuantity remaining)'
+          : '';
+      
       await AppNotification.send(
         AppNotification(
           userId: donation.donorId,
           title: 'Donation Claimed! ✅',
-          message: '$receiverName claimed your donation: "${donation.title}"',
+          message: '$receiverName claimed $quantityText of "${donation.title}"$remainingText',
           type: 'donation_claimed',
           data: {
             'donationId': donationId,
             'receiverId': receiverId,
             'receiverName': receiverName,
+            'donationTitle': donation.title,
+            'claimedQuantity': claimQuantity?.toString(),
+            'remainingQuantity': newRemainingQuantity.toString(),
+            'chatId': chatId, // Include specific chatId for this receiver-donor pair
           },
         ),
       );
-      // Do not notify receiver here per requirement; UI can handle local feedback
     } catch (e) {
       throw Exception('Failed to claim donation: $e');
     }
   }
 
-  // Complete a donation
-  Future<void> completeDonation(String donationId) async {
+  // Finalize completion and award points
+  Future<void> _finalizeCompletionAndAwardPoints(String donationId, DonationModel donation) async {
     try {
+      // IMPORTANT: Only mark as completed if remainingQuantity is 0 or null
+      // If there's remaining quantity, this is a partial completion and donation should remain available
+      final remainingQty = donation.remainingQuantity ?? 0;
+      
+      if (remainingQty > 0) {
+        print('⚠️ Donation has remaining quantity ($remainingQty). Not marking as completed yet.');
+        // Don't mark as completed if there's remaining quantity
+        // Just notify the current receiver-donor pair about their portion completion
+        // But donation remains available for others to claim remaining quantity
+        final updatedDonationDoc = await _firestore.collection('donations').doc(donationId).get();
+        final updatedDonation = DonationModel.fromFirestore(updatedDonationDoc);
+        
+        // Notify receivers about their portion completion
+        if (donation.claimedBy != null) {
+          await AppNotification.send(
+            AppNotification(
+              userId: donation.claimedBy!,
+              title: 'Your Portion Completed! ✅',
+              message: 'Your portion of "${donation.title}" has been completed. The donation still has $remainingQty remaining.',
+              type: 'donation_completed',
+              data: {
+                'donationId': donationId,
+                'chatId': donation.chatId,
+              },
+            ),
+          );
+        }
+        return; // Exit early - don't finalize completion
+      }
+      
+      // Only mark donation as completed if no remaining quantity
       await _firestore.collection('donations').doc(donationId).update({
         'status': 'completed',
         'completedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // Award points to donor and notify
-      final donationDoc = await _firestore.collection('donations').doc(donationId).get();
-        if (donationDoc.exists) {
-          final donation = DonationModel.fromFirestore(donationDoc);
-          await _awardPointsToDonor(donation.donorId);
-          if (donation.claimedBy != null) {
-            await AppNotification.send(
-              AppNotification(
-                userId: donation.donorId,
-                title: 'Donation Completed! 🎉',
-                message: 'Your donation "${donation.title}" is completed. You earned 10 points!',
-                type: 'donation_completed',
-                data: {
-                  'donationId': donationId,
-                  'pointsAwarded': 10,
-                },
-              ),
-            );
-          }
+      // Award points to donor (10 points per donation)
+      const pointsAwarded = 10;
+      final userDoc = await _firestore.collection('users').doc(donation.donorId).get();
+      if (userDoc.exists) {
+        final currentPoints = userDoc.data()?['points'] ?? 0;
+        final newPoints = currentPoints + pointsAwarded;
+        
+        await _firestore.collection('users').doc(donation.donorId).update({
+          'points': newPoints,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        // Check for certificate milestones
+        final certificateService = CertificateService();
+        await certificateService.checkAndAwardCertificate(donation.donorId, newPoints);
+      }
+
+      // Notify donor about completion and points (with chatId for navigation)
+      await AppNotification.send(
+        AppNotification(
+          userId: donation.donorId,
+          title: 'Donation Completed! 🎉',
+          message: 'Your donation "${donation.title}" is completed. You earned $pointsAwarded points!',
+          type: 'donation_completed',
+          data: {
+            'donationId': donationId,
+            'pointsAwarded': pointsAwarded,
+            'chatId': donation.chatId,
+          },
+        ),
+      );
+
+      // Notify all receivers who claimed portions (with chatId for navigation)
+      final updatedDonationDoc = await _firestore.collection('donations').doc(donationId).get();
+      final updatedDonation = DonationModel.fromFirestore(updatedDonationDoc);
+      
+      // Notify all receivers who claimed
+      if (updatedDonation.quantityClaims != null && updatedDonation.quantityClaims!.isNotEmpty) {
+        for (final receiverId in updatedDonation.quantityClaims!.keys) {
+          await AppNotification.send(
+            AppNotification(
+              userId: receiverId,
+              title: 'Donation Completed! ✅',
+              message: 'The donation "${donation.title}" has been fully completed.',
+              type: 'donation_completed',
+              data: {
+                'donationId': donationId,
+                'chatId': donation.chatId,
+              },
+            ),
+          );
         }
+      } else if (donation.claimedBy != null) {
+        // Fallback to legacy single receiver notification
+        await AppNotification.send(
+          AppNotification(
+            userId: donation.claimedBy!,
+            title: 'Donation Completed! ✅',
+            message: 'The donation "${donation.title}" has been successfully completed. Please share your feedback!',
+            type: 'donation_completed',
+            data: {
+              'donationId': donationId,
+              'chatId': donation.chatId,
+            },
+          ),
+        );
+      }
     } catch (e) {
-      throw Exception('Failed to complete donation: $e');
+      print('Error finalizing completion: $e');
+      throw Exception('Failed to finalize completion: $e');
     }
   }
 
-  // Award points to donor
-  Future<void> _awardPointsToDonor(String donorId) async {
+  // Legacy method - kept for backward compatibility but now requires both confirmations
+  Future<void> completeDonation(String donationId) async {
+    // This method is deprecated - use confirmCompletionAsDonor or confirmCompletionAsReceiver instead
+    throw Exception('Please use confirmCompletionAsDonor() or confirmCompletionAsReceiver() instead');
+  }
+
+  // Award points to donor (private helper - now only called when both confirm)
+  Future<void> _awardPointsToDonor(String donorId, int points) async {
     try {
       final userDoc = await _firestore.collection('users').doc(donorId).get();
       if (userDoc.exists) {
         final currentPoints = userDoc.data()?['points'] ?? 0;
+        final newPoints = currentPoints + points;
+        
         await _firestore.collection('users').doc(donorId).update({
-          'points': currentPoints + 10, // Award 10 points per donation
+          'points': newPoints,
           'updatedAt': FieldValue.serverTimestamp(),
         });
+
+        // Check for certificate milestones
+        final certificateService = CertificateService();
+        await certificateService.checkAndAwardCertificate(donorId, newPoints);
       }
     } catch (e) {
       print('Error awarding points: $e');

@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
-import '../services/feedback_service.dart';
-import '../models/feedback_model.dart';
+// import '../services/feedback_service.dart'; // Removed - feedback service deleted
 
 class FeedbackScreen extends StatefulWidget {
   final String donationId;
@@ -22,99 +19,31 @@ class FeedbackScreen extends StatefulWidget {
 }
 
 class _FeedbackScreenState extends State<FeedbackScreen> {
-  final FeedbackService _feedbackService = FeedbackService();
-  final ImagePicker _imagePicker = ImagePicker();
+  // final FeedbackService _feedbackService = FeedbackService(); // Removed
   
-  int _rating = 0;
-  final TextEditingController _commentController = TextEditingController();
-  List<File> _selectedImages = [];
-  bool _isVisible = true;
+  int _foodRating = 0;
+  int _donorRating = 0;
+  final TextEditingController _foodReviewController = TextEditingController();
+  final TextEditingController _donorReviewController = TextEditingController();
   bool _isSubmitting = false;
 
   @override
   void dispose() {
-    _commentController.dispose();
+    _foodReviewController.dispose();
+    _donorReviewController.dispose();
     super.dispose();
   }
 
-  Future<void> _pickImages() async {
-    try {
-      final List<XFile> images = await _imagePicker.pickMultiImage();
-      if (images.isNotEmpty) {
-        setState(() {
-          _selectedImages = images.map((image) => File(image.path)).toList();
-        });
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error picking images: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
   Future<void> _submitFeedback() async {
-    if (_rating == 0) {
+    // Feedback submission feature has been removed
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please select a rating'),
-          backgroundColor: Colors.red,
+          content: Text('Feedback feature has been removed'),
+          backgroundColor: Colors.orange,
         ),
       );
-      return;
-    }
-
-    if (_commentController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please write a comment'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    setState(() => _isSubmitting = true);
-
-    try {
-      // TODO: Upload images to Firebase Storage and get URLs
-      final List<String> imageUrls = []; // Placeholder for image URLs
-      
-      final success = await _feedbackService.submitFeedback(
-        donationId: widget.donationId,
-        rating: _rating,
-        comment: _commentController.text.trim(),
-        images: imageUrls,
-        isVisible: _isVisible,
-      );
-
-      if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Feedback submitted successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Get.back();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to submit feedback. Please try again.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      setState(() => _isSubmitting = false);
+      Get.back();
     }
   }
 
@@ -173,9 +102,9 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
             
             const SizedBox(height: 24),
             
-            // Rating section
+            // Food Rating section
             const Text(
-              'Rate your experience',
+              'Rate the Food Quality',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -186,12 +115,12 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
             Row(
               children: List.generate(5, (index) {
                 return GestureDetector(
-                  onTap: () => setState(() => _rating = index + 1),
+                  onTap: () => setState(() => _foodRating = index + 1),
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
                     child: Icon(
-                      index < _rating ? Icons.star : Icons.star_border,
-                      color: index < _rating ? Colors.amber : Colors.grey,
+                      index < _foodRating ? Icons.star : Icons.star_border,
+                      color: index < _foodRating ? Colors.amber : Colors.grey,
                       size: 40,
                     ),
                   ),
@@ -201,9 +130,9 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
             
             const SizedBox(height: 24),
             
-            // Comment section
+            // Food Review section
             const Text(
-              'Share your feedback',
+              'Food Review (optional)',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -212,10 +141,10 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
             ),
             const SizedBox(height: 16),
             TextField(
-              controller: _commentController,
-              maxLines: 5,
+              controller: _foodReviewController,
+              maxLines: 3,
               decoration: InputDecoration(
-                hintText: 'Tell us about your experience with this food donation...',
+                hintText: 'Tell us about the food quality...',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -228,9 +157,9 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
             
             const SizedBox(height: 24),
             
-            // Image upload section
+            // Donor Rating section
             const Text(
-              'Add photos (optional)',
+              'Rate the Donor',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -238,97 +167,47 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            GestureDetector(
-              onTap: _pickImages,
-              child: Container(
-                height: 120,
-                decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.grey[300]!,
-                    style: BorderStyle.solid,
-                    width: 2),
-                ),
-                child: _selectedImages.isEmpty
-                    ? const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.add_photo_alternate, size: 40, color: Colors.grey),
-                          SizedBox(height: 8),
-                          Text(
-                            'Tap to add photos',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ],
-                      )
-                    : GridView.builder(
-                        padding: const EdgeInsets.all(8),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 3,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
-                        ),
-                        itemCount: _selectedImages.length,
-                        itemBuilder: (context, index) {
-                          return Stack(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.file(
-                                  _selectedImages[index],
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                ),
-                              ),
-                              Positioned(
-                                top: 4,
-                                right: 4,
-                                child: GestureDetector(
-                                  onTap: () {
-                                    setState(() {
-                                      _selectedImages.removeAt(index);
-                                    });
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.red,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.close,
-                                      color: Colors.white,
-                                      size: 16,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-              ),
+            Row(
+              children: List.generate(5, (index) {
+                return GestureDetector(
+                  onTap: () => setState(() => _donorRating = index + 1),
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    child: Icon(
+                      index < _donorRating ? Icons.star : Icons.star_border,
+                      color: index < _donorRating ? Colors.amber : Colors.grey,
+                      size: 40,
+                    ),
+                  ),
+                );
+              }),
             ),
             
             const SizedBox(height: 24),
             
-            // Visibility toggle
-            Row(
-              children: [
-                Checkbox(
-                  value: _isVisible,
-                  onChanged: (value) => setState(() => _isVisible = value ?? true),
-                  activeColor: const Color(0xFF22c55e),
+            // Donor Review section
+            const Text(
+              'Donor Review (optional)',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _donorReviewController,
+              maxLines: 3,
+              decoration: InputDecoration(
+                hintText: 'Tell us about your experience with the donor...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                const Expanded(
-                  child: Text(
-                    'Make this feedback visible to other users',
-                    style: TextStyle(color: Colors.black87),
-                  ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFF22c55e)),
                 ),
-              ],
+              ),
             ),
             
             const SizedBox(height: 32),

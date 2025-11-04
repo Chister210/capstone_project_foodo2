@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../services/terms_service.dart';
 
 class TermsAndConditionsPopup extends StatefulWidget {

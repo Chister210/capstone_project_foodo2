@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:get/get.dart';
-import '../services/feedback_service.dart';
-import '../models/feedback_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+// import '../services/feedback_service.dart'; // Removed - feedback service deleted
+// import '../models/feedback_model.dart'; // Removed - feedback model deleted
 import '../utils/responsive_layout.dart';
 
 class PublicFeedbackScreen extends StatefulWidget {
@@ -12,7 +12,7 @@ class PublicFeedbackScreen extends StatefulWidget {
 }
 
 class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
-  final FeedbackService _feedbackService = FeedbackService();
+  // final FeedbackService _feedbackService = FeedbackService(); // Removed
   String _selectedFilter = 'all'; // all, recent, high_rating
 
   @override
@@ -61,8 +61,8 @@ class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
           ),
         ],
       ),
-      body: StreamBuilder<List<FeedbackModel>>(
-        stream: _feedbackService.getAllFeedback(),
+      body: StreamBuilder<List<dynamic>>(
+        stream: Stream.value([]), // Placeholder - feedback removed
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -123,33 +123,27 @@ class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
     );
   }
 
-  List<FeedbackModel> _filterFeedbacks(List<FeedbackModel> feedbacks) {
-    switch (_selectedFilter) {
-      case 'recent':
-        feedbacks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        return feedbacks.take(10).toList();
-      case 'high_rating':
-        return feedbacks.where((f) => f.rating >= 4).toList();
-      default:
-        return feedbacks;
-    }
+  List<dynamic> _filterFeedbacks(List<dynamic> feedbacks) {
+    // Feedback filtering removed
+    return [];
   }
 
-  Widget _buildFeedbackCard(FeedbackModel feedback) {
+  Widget _buildFeedbackCard(dynamic feedback) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
           ),
         ],
       ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -157,16 +151,32 @@ class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
           Row(
             children: [
               Expanded(
-                child: Text(
-                  feedback.foodTitle,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
+                child: FutureBuilder<DocumentSnapshot>(
+                  future: FirebaseFirestore.instance.collection('donations').doc(feedback.donationId).get(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData && snapshot.data!.exists) {
+                      final donation = snapshot.data!.data() as Map<String, dynamic>;
+                      return Text(
+                        donation['title'] ?? 'Donation',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      );
+                    }
+                    return const Text(
+                      'Donation',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    );
+                  },
                 ),
               ),
-              _buildRatingStars(feedback.rating),
+              _buildRatingStars(feedback.averageRating.round()),
             ],
           ),
           
@@ -177,9 +187,17 @@ class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
             children: [
               const Icon(Icons.person, size: 16, color: Colors.grey),
               const SizedBox(width: 4),
-              Text(
-                'Donated by ${feedback.donorName}',
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+              FutureBuilder<DocumentSnapshot>(
+                future: FirebaseFirestore.instance.collection('users').doc(feedback.donorId).get(),
+                builder: (context, snapshot) {
+                  final donorName = snapshot.hasData && snapshot.data!.exists
+                      ? (snapshot.data!.data() as Map<String, dynamic>)['displayName'] ?? 'Donor'
+                      : 'Donor';
+                  return Text(
+                    'Donated by $donorName',
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  );
+                },
               ),
               const SizedBox(width: 16),
               const Icon(Icons.person_outline, size: 16, color: Colors.grey),
@@ -193,48 +211,120 @@ class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
           
           const SizedBox(height: 12),
           
-          // Comment
-          if (feedback.comment.isNotEmpty) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey[50],
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                feedback.comment,
-                style: const TextStyle(
-                  color: Colors.black87,
-                  fontSize: 14,
+          // Reviews
+          if ((feedback.foodReview != null && feedback.foodReview!.isNotEmpty) ||
+              (feedback.donorReview != null && feedback.donorReview!.isNotEmpty)) ...[
+            if (feedback.foodReview != null && feedback.foodReview!.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(8),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-          
-          // Images
-          if (feedback.images.isNotEmpty) ...[
-            SizedBox(
-              height: 100,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: feedback.images.length,
-                itemBuilder: (context, index) {
-                  return Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    width: 100,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      image: DecorationImage(
-                        image: NetworkImage(feedback.images[index]),
-                        fit: BoxFit.cover,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Food Review:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color: Colors.grey,
                       ),
                     ),
-                  );
-                },
+                    const SizedBox(height: 4),
+                    Text(
+                      feedback.foodReview!,
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 12),
+            ],
+            if (feedback.donorReview != null && feedback.donorReview!.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Donor Review:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      feedback.donorReview!,
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (feedback.marketReview != null && feedback.marketReview!.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF22c55e).withOpacity(0.1),
+                      const Color(0xFF16a34a).withOpacity(0.1),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: const Color(0xFF22c55e).withOpacity(0.3),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.storefront, size: 16, color: Color(0xFF22c55e)),
+                        const SizedBox(width: 4),
+                        const Text(
+                          'Market Review:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            color: Color(0xFF22c55e),
+                          ),
+                        ),
+                        if (feedback.marketRating != null) ...[
+                          const SizedBox(width: 8),
+                          _buildRatingStars(feedback.marketRating!),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      feedback.marketReview!,
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
           ],
           
           // Footer with date
@@ -251,13 +341,13 @@ class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: _getRatingColor(feedback.rating).withOpacity(0.1),
+                  color: _getRatingColor(feedback.averageRating.round()).withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  '${feedback.rating}/5',
+                  '${feedback.averageRating.toStringAsFixed(1)}/5',
                   style: TextStyle(
-                    color: _getRatingColor(feedback.rating),
+                    color: _getRatingColor(feedback.averageRating.round()),
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
@@ -266,6 +356,7 @@ class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
             ],
           ),
         ],
+      ),
       ),
     );
   }

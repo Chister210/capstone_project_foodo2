@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import '../models/donation_model.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class DonationCard extends StatelessWidget {
   final DonationModel donation;
@@ -60,12 +62,12 @@ class DonationCard extends StatelessWidget {
                     right: 12,
                     child: _buildStatusBadge(),
                   ),
-                  // Time Badge
-                  Positioned(
-                    bottom: 12,
-                    left: 12,
-                    child: _buildTimeBadge(),
-                  ),
+                  // Time Badge - removed per user request
+                  // Positioned(
+                  //   bottom: 12,
+                  //   left: 12,
+                  //   child: _buildTimeBadge(),
+                  // ),
                 ],
               ),
             ),
@@ -112,6 +114,63 @@ class DonationCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   
+                  // Market Name with Rating
+                  FutureBuilder<Map<String, dynamic>>(
+                    future: _getMarketInfo(donation.donorId),
+                    builder: (context, snapshot) {
+                      if (snapshot.hasData && snapshot.data != null) {
+                        final marketName = snapshot.data!['name'] as String?;
+                        final marketRating = snapshot.data!['rating'] as double?;
+                        
+                        if (marketName != null) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.storefront,
+                                  size: 16,
+                                  color: Colors.grey[600],
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  marketName,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[700],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                if (marketRating != null && marketRating > 0) ...[
+                                  const SizedBox(width: 8),
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.star,
+                                        size: 14,
+                                        color: Colors.amber,
+                                      ),
+                                      const SizedBox(width: 2),
+                                      Text(
+                                        marketRating.toStringAsFixed(1),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[700],
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        }
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  ),
+                  
                   // Description
                   Text(
                     donation.description,
@@ -144,11 +203,11 @@ class DonationCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       
-                      // Quantity
+                      // Quantity with remaining info
                       if (donation.quantity != null && donation.quantity!.isNotEmpty)
                         _buildDetailChip(
                           icon: Icons.scale_rounded,
-                          label: donation.quantity!,
+                          label: _buildQuantityLabel(donation),
                           color: const Color(0xFFf59e0b),
                         ),
                       
@@ -235,30 +294,100 @@ class DonationCard extends StatelessWidget {
                       ],
                     ),
                   
-                  // Action Button
-                  if (onClaim != null && donation.status == 'available')
+                  // Action Buttons
+                  if (onClaim != null && (donation.status == 'available' || (donation.hasPartialClaims && !donation.isFullyClaimed)))
+                    Builder(
+                      builder: (context) {
+                        // Check if current user has already claimed some quantity
+                        final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+                        final userHasClaimed = currentUserId != null && 
+                            donation.quantityClaims != null && 
+                            donation.quantityClaims!.containsKey(currentUserId) &&
+                            (donation.quantityClaims![currentUserId] ?? 0) > 0;
+                        
+                        final hasPartialClaims = donation.hasPartialClaims;
+                        
+                        return Column(
+                          children: [
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: donation.isFullyClaimed ? null : onClaim,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: donation.isFullyClaimed 
+                                      ? Colors.grey 
+                                      : const Color(0xFF22c55e),
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                                child: Text(
+                                  donation.isFullyClaimed 
+                                      ? 'Fully Claimed'
+                                      : (userHasClaimed
+                                          ? 'Claim More' 
+                                          : 'Claim Donation'),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            // Show remaining quantity info
+                            if (hasPartialClaims && !donation.isFullyClaimed)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Text(
+                                  '${donation.remainingQuantity ?? donation.totalQuantity ?? 0} remaining',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                  
+                  // Confirmation status for claimed donations
+                  if (donation.status == 'claimed' || (donation.status == 'in_progress' && !donation.isFullyConfirmed))
                     Column(
                       children: [
                         const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: onClaim,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF22c55e),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                donation.isFullyConfirmed ? Icons.check_circle : Icons.pending,
+                                color: Colors.blue,
+                                size: 20,
                               ),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            child: const Text(
-                              'Claim Donation',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  donation.isFullyConfirmed
+                                      ? 'Donation fully claimed'
+                                      : 'Donation in progress',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.blue[800],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
                               ),
-                            ),
+                            ],
                           ),
                         ),
                       ],
@@ -315,11 +444,12 @@ class DonationCard extends StatelessWidget {
                         right: 16,
                         child: _buildStatusBadge(),
                       ),
-                      Positioned(
-                        top: 16,
-                        left: 16,
-                        child: _buildTimeBadge(),
-                      ),
+                      // Time Badge - removed per user request
+                      // Positioned(
+                      //   top: 16,
+                      //   left: 16,
+                      //   child: _buildTimeBadge(),
+                      // ),
                     ],
                   ),
                   
@@ -509,8 +639,9 @@ Widget _buildDetailsSection(BuildContext context) {
           _buildDetailItem(
             icon: Icons.access_time_rounded,
             title: 'Pickup Time',
-            value: DateFormat('MMM dd, yyyy - h:mm a').format(donation.pickupTime),
+            value: DateFormat('h:mm a').format(donation.pickupTime),
             color: const Color(0xFF8b5cf6),
+            valueFontSize: 10, // Smaller font size for pickup time
           ),
         ],
       ),
@@ -648,6 +779,7 @@ Widget _buildDetailItem({
   required String title,
   required String value,
   required Color color,
+  double? valueFontSize, // Optional custom font size for value
 }) {
   return Container(
     padding: const EdgeInsets.all(10), // Reduced padding
@@ -683,7 +815,7 @@ Widget _buildDetailItem({
           value,
           style: TextStyle(
             color: Colors.black,
-            fontSize: 12, // Smaller font
+            fontSize: valueFontSize ?? 12, // Use custom size if provided, else default to 12
             fontWeight: FontWeight.bold,
           ),
           maxLines: 2,
@@ -879,16 +1011,34 @@ Widget _buildDonorSection() {
     Color textColor;
     String text;
 
+    // Check if donation has partial claims
+    final hasPartial = donation.hasPartialClaims;
+    final isFullyClaimed = donation.isFullyClaimed;
+
     switch (donation.status) {
       case 'available':
-        backgroundColor = const Color(0xFF22c55e);
-        textColor = Colors.white;
-        text = 'Available';
+        if (hasPartial) {
+          backgroundColor = const Color(0xFFFF8C00);
+          textColor = Colors.white;
+          final remaining = donation.remainingQuantity ?? donation.totalQuantity ?? 0;
+          text = '$remaining left';
+        } else {
+          backgroundColor = const Color(0xFF22c55e);
+          textColor = Colors.white;
+          text = 'Available';
+        }
         break;
       case 'claimed':
-        backgroundColor = const Color(0xFF3b82f6);
-        textColor = Colors.white;
-        text = 'Claimed';
+        if (!isFullyClaimed && hasPartial) {
+          backgroundColor = const Color(0xFFFF8C00);
+          textColor = Colors.white;
+          final remaining = donation.remainingQuantity ?? 0;
+          text = '$remaining left';
+        } else {
+          backgroundColor = const Color(0xFF3b82f6);
+          textColor = Colors.white;
+          text = 'Claimed';
+        }
         break;
       case 'completed':
         backgroundColor = const Color(0xFF6b7280);
@@ -896,9 +1046,16 @@ Widget _buildDonorSection() {
         text = 'Completed';
         break;
       default:
-        backgroundColor = Colors.grey;
-        textColor = Colors.white;
-        text = 'Unknown';
+        if (hasPartial && !isFullyClaimed) {
+          backgroundColor = const Color(0xFFFF8C00);
+          textColor = Colors.white;
+          final remaining = donation.remainingQuantity ?? donation.totalQuantity ?? 0;
+          text = '$remaining left';
+        } else {
+          backgroundColor = Colors.grey;
+          textColor = Colors.white;
+          text = 'Unknown';
+        }
     }
 
     return Container(
@@ -1016,6 +1173,68 @@ Widget _buildDonorSection() {
     } else {
       return DateFormat('MMM d, h:mm a').format(pickupTime);
     }
+  }
+
+  String _buildQuantityLabel(DonationModel donation) {
+    if (donation.quantity == null) return '';
+    
+    final hasQuantity = donation.totalQuantity != null && donation.totalQuantity! > 0;
+    if (hasQuantity && donation.remainingQuantity != null) {
+      final remaining = donation.remainingQuantity!;
+      final total = donation.totalQuantity!;
+      
+      if (remaining < total) {
+        // Show remaining quantity
+        return '${donation.quantity} ($remaining left)';
+      }
+    }
+    
+    return donation.quantity!;
+  }
+
+  // Fetch market name and rating from donor's user document and feedback
+  Future<Map<String, dynamic>> _getMarketInfo(String donorId) async {
+    try {
+      final donorDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(donorId)
+          .get();
+      
+      if (donorDoc.exists) {
+        final data = donorDoc.data();
+        final marketName = data?['marketName'] as String?;
+        
+        // Get market rating from feedback (average of marketRating)
+        double? marketRating;
+        try {
+          final feedbackSnapshot = await FirebaseFirestore.instance
+              .collection('feedback')
+              .where('donorId', isEqualTo: donorId)
+              .where('isVisible', isEqualTo: true)
+              .get();
+          
+          final marketRatings = feedbackSnapshot.docs
+              .map((doc) => doc.data()['marketRating'] as int?)
+              .where((rating) => rating != null)
+              .toList();
+          
+          if (marketRatings.isNotEmpty) {
+            marketRating = marketRatings.reduce((a, b) => a! + b!)! / marketRatings.length;
+          }
+        } catch (e) {
+          // If feedback query fails, continue without rating
+          debugPrint('Error fetching market rating: $e');
+        }
+        
+        return {
+          'name': marketName,
+          'rating': marketRating,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error fetching market info: $e');
+    }
+    return {};
   }
 
   ImageProvider _getImageProvider(String imageUrl) {

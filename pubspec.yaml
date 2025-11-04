@@ -53,9 +53,9 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   image: ^4.1.7
   http: ^1.2.2
+  url_launcher: ^6.3.1
   
   
-
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -75,13 +75,11 @@ dev_dependencies:
 
 flutter_native_splash:
   color: "#ffffff"
-  image: assets/logos/logo.png
   android: true
   ios: true
   
   android_12:
     color: "#ffffff"
-    image: assets/logos/logo.png
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -96,6 +94,7 @@ flutter:
   assets:
     - assets/logos/logo.png
     - assets/logos/google_logo.png
+    - assets/logos/icon_foodo.jpg
     - assets/gif/role_selection.gif
     - assets/lottie_files/role_selection.json
     - assets/lottie_files/signIn_animation.json
@@ -111,6 +110,8 @@ flutter:
     - assets/lottie_files/onboarding_donor3.json
     - assets/lottie_files/food_donated.json
     - assets/lottie_files/email_verification.json
+    - assets/lottie_files/loading.json
+    - assets/lottie_files/food_claimed.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

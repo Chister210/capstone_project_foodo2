@@ -9,18 +9,19 @@ import 'package:capstone_project/screens/chat_list_screen.dart';
 import 'package:capstone_project/widgets/enhanced_notification_popup.dart';
 import 'package:capstone_project/widgets/donation_form.dart';
 import 'package:capstone_project/widgets/donation_card.dart';
+import 'package:capstone_project/screens/chat_screen.dart';
 import 'package:capstone_project/services/donation_service.dart';
 import 'package:capstone_project/services/donor_notification_service.dart';
 import 'package:capstone_project/services/messaging_service.dart';
 import 'package:capstone_project/services/terms_service.dart';
 import 'package:capstone_project/models/donation_model.dart';
 import 'package:capstone_project/widgets/terms_and_conditions_popup.dart';
-import 'package:flutter/services.dart'; // Add this import for SystemNavigator
 import 'package:cloud_firestore/cloud_firestore.dart'; // added
+import 'dart:async';
 
 class DonorHome extends StatefulWidget {
   final String? displayName;
-  const DonorHome({Key? key, this.displayName}) : super(key: key);
+  const DonorHome({super.key, this.displayName});
 
   @override
   State<DonorHome> createState() => _DonorHomeState();
@@ -34,17 +35,355 @@ class _DonorHomeState extends State<DonorHome> {
   final TermsService _termsService = TermsService();
 
   String? _displayName; // cached display name
+  StreamSubscription? _donationClaimedSubscription;
+  final Set<String> _processedNotificationIds = {};
+  DateTime _appStartTime = DateTime.now(); // Track when app was opened
 
   @override
   void initState() {
     super.initState();
+    _appStartTime = DateTime.now(); // Record app start time
     // Delay to ensure Scaffold is mounted
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkTermsAcceptance();
       _loadDisplayName(); // fetch display name from Firestore / Auth
-      // NotificationService is automatically initialized via Get.put()
-      // No need to call any method manually
+      _setupDonationClaimedListener(); // Setup listener for donation claimed
     });
+  }
+  
+  void _setupDonationClaimedListener() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    
+    // Listen to notifications collection for NEW donation_claimed notifications only
+    _donationClaimedSubscription = FirebaseFirestore.instance
+        .collection('notifications')
+        .where('userId', isEqualTo: user.uid)
+        .where('type', isEqualTo: 'donation_claimed')
+        .where('isRead', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+      
+      for (var doc in snapshot.docChanges) {
+        // Only process NEW notifications (added, not existing ones)
+        if (doc.type == DocumentChangeType.added) {
+          final notificationId = doc.doc.id;
+          
+          // Only process if not already shown
+          if (!_processedNotificationIds.contains(notificationId)) {
+            final data = doc.doc.data() as Map<String, dynamic>;
+            final createdAt = data['createdAt'] as Timestamp?;
+            
+            // Only show popup if notification was created after app start (new notification)
+            if (createdAt != null) {
+              final notificationTime = createdAt.toDate();
+              
+              // Check if notification is newer than app start time (with 5 second buffer)
+              if (notificationTime.isAfter(_appStartTime.subtract(const Duration(seconds: 5)))) {
+                _processedNotificationIds.add(notificationId);
+                
+                final notificationData = data['data'] as Map<String, dynamic>? ?? {};
+                
+                // Small delay to ensure UI is ready
+                Future.delayed(const Duration(milliseconds: 500), () {
+                  if (mounted) {
+                    _showDonationClaimedDialog(notificationData, notificationId);
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+  
+  Future<void> _showDonationClaimedDialog(Map<String, dynamic> data, String notificationId) async {
+    final donationId = data['donationId'] as String?;
+    final receiverName = data['receiverName'] as String? ?? 'Receiver';
+    final donationTitle = data['donationTitle'] as String? ?? 'Your donation';
+    final chatId = data['chatId'] as String?;
+    final receiverId = data['receiverId'] as String?;
+    
+    if (donationId == null) return;
+    
+    // Get receiver name from Firestore if needed
+    String finalReceiverName = receiverName;
+    if (finalReceiverName == 'Receiver' && receiverId != null) {
+      try {
+        final receiverDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(receiverId)
+            .get();
+        if (receiverDoc.exists) {
+          final receiverData = receiverDoc.data()!;
+          finalReceiverName = receiverData['displayName'] ?? 
+                            receiverData['email']?.toString().split('@')[0] ?? 
+                            'Receiver';
+        }
+      } catch (e) {
+        debugPrint('Error fetching receiver name: $e');
+      }
+    }
+    
+    // Wait for chatId if not available yet
+    String? finalChatId = chatId;
+    if ((finalChatId == null || finalChatId.isEmpty)) {
+      int retries = 0;
+      while ((finalChatId == null || finalChatId.isEmpty) && retries < 5) {
+        await Future.delayed(const Duration(milliseconds: 300));
+        try {
+          final donationDoc = await FirebaseFirestore.instance
+              .collection('donations')
+              .doc(donationId)
+              .get();
+          if (donationDoc.exists) {
+            final donationData = donationDoc.data()!;
+            finalChatId = donationData['chatId'] as String?;
+          }
+        } catch (e) {
+          debugPrint('Error fetching chatId: $e');
+        }
+        retries++;
+      }
+    }
+    
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white,
+                  Colors.grey[50]!,
+                ],
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Icon with gradient background
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF22c55e).withOpacity(0.3),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.check_circle,
+                    color: Colors.white,
+                    size: 48,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                // Title
+                const Text(
+                  'Donation Claimed! ✅',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                    letterSpacing: 0.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                // Content
+                Text(
+                  '$finalReceiverName claimed "$donationTitle"',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey[700],
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                // Message box with gradient
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blue[50]!, Colors.blue[100]!],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.blue[300]!, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue[600],
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.chat_bubble_outline, color: Colors.white, size: 24),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Go to messages to start communicating with $finalReceiverName!',
+                              style: TextStyle(
+                                color: Colors.blue[900],
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // Action buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.pop(dialogContext);
+                          // Mark notification as read
+                          FirebaseFirestore.instance
+                              .collection('notifications')
+                              .doc(notificationId)
+                              .update({'isRead': true});
+                        },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(color: Colors.grey[300]!, width: 2),
+                          ),
+                        ),
+                        child: Text(
+                          'Later',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF22c55e).withOpacity(0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            Navigator.pop(dialogContext);
+                            
+                            // Mark notification as read
+                            FirebaseFirestore.instance
+                                .collection('notifications')
+                                .doc(notificationId)
+                                .update({'isRead': true});
+                            
+                            await Future.delayed(const Duration(milliseconds: 200));
+                            
+                            if (!mounted) return;
+                            
+                            if (finalChatId != null && finalChatId.isNotEmpty) {
+                              // Navigate to specific chat
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ChatScreen(
+                                    chatId: finalChatId!,
+                                    otherUserName: finalReceiverName,
+                                    otherUserType: 'receiver',
+                                  ),
+                                ),
+                              );
+                            } else {
+                              // Fallback: go to messages tab
+                              navigationController.changePage(2);
+                            }
+                          },
+                          icon: const Icon(Icons.chat, size: 20),
+                          label: const Text(
+                            'Go to Messages',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _donationClaimedSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _checkTermsAcceptance() async {
@@ -238,6 +577,26 @@ class _DonorHomeState extends State<DonorHome> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
           ),
+          // Donation claimed status indicator
+          if ((donation.status == 'claimed' || donation.status == 'in_progress') && 
+              donation.claimedBy != null)
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                // Completion confirmation removed
+                Get.snackbar(
+                  'Info',
+                  'Confirmation feature has been removed',
+                  backgroundColor: Colors.orange,
+                  colorText: Colors.white,
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF22c55e),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Confirm Completion'),
+            ),
           if (donation.status == 'available')
             ElevatedButton(
               onPressed: () async {
@@ -322,6 +681,7 @@ class _DonorHomeState extends State<DonorHome> {
   String _formatDateTime(DateTime dateTime) {
     return '${dateTime.day}/${dateTime.month}/${dateTime.year} at ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
+
 
   Future<void> _loadDisplayName() async {
     try {

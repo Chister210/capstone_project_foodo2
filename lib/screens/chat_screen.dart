@@ -3,8 +3,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:get/get.dart';
 import 'package:geolocator/geolocator.dart';
+import 'dart:async';
 import '../models/message_model.dart';
+import '../models/donation_model.dart';
 import '../services/messaging_service.dart';
+import '../services/donation_service.dart';
 import '../services/location_tracking_service.dart';
 import 'live_tracking_screen.dart';
 
@@ -27,17 +30,106 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final MessagingService _messagingService = MessagingService();
+  final DonationService _donationService = DonationService();
   final LocationTrackingService _locationService = LocationTrackingService();
   final ScrollController _scrollController = ScrollController();
   
   String? _currentUserId;
+  String? _donationId;
+  String? _userType; // 'donor' or 'receiver'
+  String? _receiverId; // For getting receiver name in donor view
+  String? _receiverName; // Receiver name for donor button
   bool _isLoading = false;
+  bool _isProcessing = false;
 
   @override
   void initState() {
     super.initState();
     _currentUserId = FirebaseAuth.instance.currentUser?.uid;
     _markMessagesAsRead();
+    _loadChatAndDonationInfo();
+  }
+
+
+  Future<void> _loadChatAndDonationInfo() async {
+    try {
+      final chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(widget.chatId)
+          .get();
+      
+      if (chatDoc.exists) {
+        final chatData = chatDoc.data()!;
+        final donationId = chatData['donationId'] as String?;
+        final donorId = chatData['donorId'] as String?;
+        final receiverId = chatData['receiverId'] as String?;
+        String? userType;
+        
+        // Determine user type
+        if (donorId == _currentUserId) {
+          userType = 'donor';
+        } else if (receiverId == _currentUserId) {
+          userType = 'receiver';
+        }
+        
+        // Get receiver name if user is donor
+        String? receiverName;
+        if (userType == 'donor' && receiverId != null) {
+          receiverName = chatData['receiverName'] as String?;
+          if (receiverName == null) {
+            try {
+              final receiverDoc = await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(receiverId)
+                  .get();
+              if (receiverDoc.exists) {
+                receiverName = receiverDoc.data()?['displayName'] ?? 
+                              receiverDoc.data()?['email']?.split('@')[0] ?? 
+                              'Receiver';
+              }
+            } catch (e) {
+              debugPrint('Error getting receiver name: $e');
+            }
+          }
+        }
+        
+        // Set state immediately to ensure UI updates
+        if (mounted) {
+          setState(() {
+            _donationId = donationId;
+            _userType = userType;
+            _receiverId = receiverId;
+            _receiverName = receiverName;
+          });
+        }
+        
+      } else {
+        // If chat doesn't exist, try to extract donationId from chatId format
+        // Format: donorId_receiverId_donationId
+        final parts = widget.chatId.split('_');
+        if (parts.length >= 3) {
+          final donationIdFromChatId = parts[2];
+          String? userType;
+          
+          // Determine user type from chatId
+          if (parts[0] == _currentUserId) {
+            userType = 'donor';
+          } else if (parts.length > 1 && parts[1] == _currentUserId) {
+            userType = 'receiver';
+          }
+          
+          if (mounted) {
+            setState(() {
+              _donationId = donationIdFromChatId;
+              _userType = userType;
+            });
+            
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading chat info: $e');
+    }
   }
 
   @override
@@ -185,7 +277,9 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         return LayoutBuilder(
           builder: (context, constraints) {
-            return Container(
+            return GestureDetector(
+              onLongPress: isMe ? () => _showDeleteMessageDialog(message) : null,
+              child: Container(
               margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
               child: Row(
                 mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
@@ -314,6 +408,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ],
                 ],
+                ),
               ),
             );
           },
@@ -453,4 +548,90 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+
+  // Show delete message confirmation dialog
+  Future<void> _showDeleteMessageDialog(MessageModel message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_outline, color: Colors.red, size: 28),
+            SizedBox(width: 12),
+            Text(
+              'Delete Message',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Are you sure you want to delete this message? This action cannot be undone.',
+          style: TextStyle(fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text(
+              'Delete',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() => _isProcessing = true);
+      try {
+        await _messagingService.deleteMessage(widget.chatId, message.id);
+        if (mounted) {
+          Get.snackbar(
+            'Success',
+            'Message deleted',
+            backgroundColor: Colors.green,
+            colorText: Colors.white,
+            duration: const Duration(seconds: 2),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          Get.snackbar(
+            'Error',
+            'Failed to delete message: $e',
+            backgroundColor: Colors.red,
+            colorText: Colors.white,
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isProcessing = false);
+      }
+    }
+  }
 }
+

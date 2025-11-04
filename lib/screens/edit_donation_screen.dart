@@ -300,7 +300,7 @@ class _EditDonationScreenState extends State<EditDonationScreen> {
 
               // Delivery type
               DropdownButtonFormField<String>(
-                value: _selectedDeliveryType,
+                initialValue: _selectedDeliveryType,
                 decoration: const InputDecoration(
                   labelText: 'Delivery Type *',
                   border: OutlineInputBorder(),

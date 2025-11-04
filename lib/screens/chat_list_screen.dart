@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:get/get.dart';
 import '../services/messaging_service.dart';
 import '../models/message_model.dart';
 import 'chat_screen.dart';
@@ -35,7 +34,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       if (userDoc.exists) {
         final userData = userDoc.data()!;
         setState(() {
-          _userType = userData['userType'] ?? userData['displayName'];
+          _userType = userData['userType'] as String?;
         });
       }
     }

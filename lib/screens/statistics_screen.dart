@@ -717,7 +717,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
                 ],
               ),
             );
-          }).toList(),
+          }),
         ],
       ),
     );
@@ -884,7 +884,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
                 ],
               ),
             );
-          }).toList(),
+          }),
         ],
       ),
     );
@@ -899,7 +899,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
           mainAxisSize: MainAxisSize.min,
           children: [
             DropdownButtonFormField<String>(
-              value: _selectedPeriod,
+              initialValue: _selectedPeriod,
               decoration: const InputDecoration(labelText: 'Time Period'),
               items: const [
                 DropdownMenuItem(value: 'day', child: Text('Today')),
@@ -911,7 +911,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: _selectedFoodCategory,
+              initialValue: _selectedFoodCategory,
               decoration: const InputDecoration(labelText: 'Food Category'),
               items: [
                 const DropdownMenuItem(value: null, child: Text('All Categories')),
@@ -924,7 +924,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with TickerProvider
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: _selectedBeneficiaryType,
+              initialValue: _selectedBeneficiaryType,
               decoration: const InputDecoration(labelText: 'Beneficiary Type'),
               items: [
                 const DropdownMenuItem(value: null, child: Text('All Types')),

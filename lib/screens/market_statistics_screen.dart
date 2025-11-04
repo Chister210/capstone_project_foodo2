@@ -8,10 +8,10 @@ class MarketStatisticsScreen extends StatefulWidget {
   final String donorName;
 
   const MarketStatisticsScreen({
-    Key? key,
+    super.key,
     required this.donorId,
     required this.donorName,
-  }) : super(key: key);
+  });
 
   @override
   State<MarketStatisticsScreen> createState() => _MarketStatisticsScreenState();

@@ -54,8 +54,9 @@ class DonorStatsService {
         double sum = 0;
         for (final f in feedbackDocs) {
           final r = f['rating'];
-          if (r is int) sum += r;
-          else if (r is double) sum += r;
+          if (r is int) {
+            sum += r;
+          } else if (r is double) sum += r;
           else sum += double.tryParse(r?.toString() ?? '') ?? 0;
         }
         result['averageRating'] = sum / feedbackDocs.length;
@@ -90,7 +91,7 @@ class DonorStatsService {
         .snapshots()
         .map((snap) {
       return snap.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         final marketLocation = data['marketLocation'];
         GeoPoint? gp;
         if (marketLocation is GeoPoint) {
@@ -124,7 +125,7 @@ class DonorStatsService {
         .snapshots()
         .map((snap) {
       return snap.docs.map<DonationModel>((doc) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
 
         // normalize timestamps
         final createdAt = data['createdAt'] is Timestamp

@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/donation_model.dart';
 import '../services/delivery_confirmation_service.dart';
 import '../services/user_service.dart';
-import '../widgets/feedback_dialog.dart';
 import '../theme/app_theme.dart';
 
 class ReceiverDonationDetailsScreen extends StatefulWidget {
@@ -411,7 +408,6 @@ class _ReceiverDonationDetailsScreenState extends State<ReceiverDonationDetailsS
       
       if (success) {
         // Show feedback dialog
-        _showFeedbackDialog();
       } else {
         Get.snackbar(
           'Error',
@@ -455,22 +451,6 @@ class _ReceiverDonationDetailsScreenState extends State<ReceiverDonationDetailsS
     ) ?? false;
   }
 
-  void _showFeedbackDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => FeedbackDialog(
-        donationId: widget.donation.id,
-        donorId: widget.donation.donorId,
-        donorName: _donorName ?? 'Donor',
-        onFeedbackSubmitted: () {
-          // Update local status in UI (model remains immutable)odel remains immutable)
-          setState(() {
-            _status = 'delivered';
-          });
-        },
-      ),
-    );
-  }
 
   void _viewFeedback() {
     // Navigate to feedback view screen or show feedback in a dialog

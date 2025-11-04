@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import '../models/user_model.dart';
 import '../models/donation_model.dart';
 import '../services/donation_service.dart';
+import '../widgets/food_claim_dialog.dart';
 
 class DonorMapScreen extends StatefulWidget {
   const DonorMapScreen({super.key});
@@ -211,15 +212,21 @@ class _DonorMapScreenState extends State<DonorMapScreen> {
                         ],
                       ),
                       trailing: ElevatedButton(
-                        onPressed: () => _claimDonation(donation),
+                        onPressed: donation.isFullyClaimed ? null : () => _claimDonation(donation),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF22c55e),
+                          backgroundColor: donation.isFullyClaimed 
+                              ? Colors.grey 
+                              : const Color(0xFF22c55e),
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
                         ),
-                        child: const Text('Claim'),
+                        child: Text(
+                          donation.isFullyClaimed 
+                              ? 'Claimed' 
+                              : (donation.hasPartialClaims ? 'Claim More' : 'Claim'),
+                        ),
                       ),
                     ),
                   );
@@ -235,65 +242,104 @@ class _DonorMapScreenState extends State<DonorMapScreen> {
   Future<void> _claimDonation(DonationModel donation) async {
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      if (user == null) {
+        Get.snackbar(
+          'Error',
+          'Please log in to claim donations',
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
+        );
+        return;
+      }
 
-      // Update donation status
-      await FirebaseFirestore.instance
-          .collection('donations')
-          .doc(donation.id)
-          .update({
-        'status': 'claimed',
-        'claimedBy': user.uid,
-        'claimedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      // Check availability
+      final hasQuantity = donation.totalQuantity != null && donation.totalQuantity! > 0;
+      final remainingQuantity = donation.remainingQuantity ?? donation.totalQuantity ?? 0;
+      
+      if (hasQuantity && remainingQuantity <= 0) {
+        Get.snackbar(
+          'Unavailable',
+          'This donation has been fully claimed',
+          backgroundColor: Colors.orange,
+          colorText: Colors.white,
+          snackPosition: SnackPosition.TOP,
+        );
+        return;
+      }
 
-      // Create chat for communication
-      final chatId = '${donation.donorId}_${user.uid}_${donation.id}';
-      await FirebaseFirestore.instance
-          .collection('chats')
-          .doc(chatId)
-          .set({
-        'donationId': donation.id,
-        'donorId': donation.donorId,
-        'receiverId': user.uid,
-        'donorName': donors.firstWhere((d) => d.id == donation.donorId).displayName,
-        'receiverName': user.displayName ?? 'Receiver',
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'lastMessage': 'Donation claimed!',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageSenderId': user.uid,
-        'donorActive': false,
-        'receiverActive': true,
-      });
+      // Show modern claim dialog (combines quantity selection + confirmation)
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => FoodClaimDialog(
+          donation: donation,
+        ),
+      );
 
-      // Update donation with chat ID
-      await FirebaseFirestore.instance
-          .collection('donations')
-          .doc(donation.id)
-          .update({
-        'chatId': chatId,
-        'status': 'in_progress',
-      });
+      if (result == null || result['success'] != true) {
+        return; // User cancelled
+      }
+
+      final claimQuantity = result['quantity'] as int?;
+
+      // Claim the donation
+      await _donationService.claimDonation(
+        donation.id,
+        user.uid,
+        claimQuantity: claimQuantity,
+      );
 
       // Show success message
+      // Extract and clean unit, removing any "0" values
+      String unit = '';
+      if (donation.quantity != null) {
+        final quantityStr = donation.quantity!.trim();
+        
+        // Extract text after the first number (which is the quantity)
+        final match = RegExp(r'^\d+\s*(.+)$').firstMatch(quantityStr);
+        if (match != null) {
+          unit = match.group(1)?.trim() ?? '';
+          
+          // Remove any standalone "0" values from the unit
+          // Split by spaces, filter out "0", then rejoin
+          final parts = unit.split(RegExp(r'\s+'))
+              .where((part) => part.trim().isNotEmpty && part.trim() != '0')
+              .toList();
+          
+          unit = parts.join(' ').trim();
+          
+          // Additional cleanup: remove any remaining "0" patterns
+          unit = unit
+              .replaceAll(RegExp(r'^\s*0+\s+'), '') // Remove leading "0 "
+              .replaceAll(RegExp(r'\s+0+\s+'), ' ') // Remove " 0 " in middle
+              .replaceAll(RegExp(r'\s+0+\s*$'), '') // Remove trailing " 0"
+              .trim();
+        }
+      }
+      final unitText = unit.isNotEmpty ? ' $unit' : '';
+      final quantityText = hasQuantity && claimQuantity != null
+          ? '$claimQuantity$unitText'
+          : 'all';
+      
       Get.snackbar(
-        'Success!',
-        'Donation claimed! You can now communicate with the donor.',
+        'Successfully Claimed! ✅',
+        'You claimed $quantityText of "${donation.title}"',
         backgroundColor: const Color(0xFF22c55e),
         colorText: Colors.white,
         snackPosition: SnackPosition.TOP,
+        duration: const Duration(seconds: 3),
+        icon: const Icon(Icons.check_circle, color: Colors.white),
       );
 
       Navigator.pop(context);
     } catch (e) {
       Get.snackbar(
         'Error',
-        'Failed to claim donation. Please try again.',
+        'Failed to claim donation: $e',
         backgroundColor: Colors.red,
         colorText: Colors.white,
         snackPosition: SnackPosition.TOP,
+        duration: const Duration(seconds: 3),
       );
     }
   }

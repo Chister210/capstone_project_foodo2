@@ -3,9 +3,9 @@ import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/donor_stats_service.dart';
-import '../services/delivery_confirmation_service.dart';
+// import '../services/feedback_service.dart'; // Removed - feedback service deleted
 import '../models/donation_model.dart';
-import '../utils/responsive_layout.dart';
+// import '../models/feedback_model.dart'; // Removed - feedback model deleted
 import '../theme/app_theme.dart';
 
 class MarketDetailsScreen extends StatefulWidget {
@@ -28,11 +28,13 @@ class MarketDetailsScreen extends StatefulWidget {
 
 class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTickerProviderStateMixin {
   final DonorStatsService _statsService = Get.put(DonorStatsService());
-  final DeliveryConfirmationService _deliveryService = DeliveryConfirmationService();
+  // final FeedbackService _feedbackService = FeedbackService(); // Removed
   late TabController _tabController;
 
   Map<String, dynamic>? _marketStats;
-  List<Map<String, dynamic>> _allFeedback = [];
+  List<dynamic> _allFeedback = [];
+  double _marketAverageRating = 0.0;
+  int _marketReviewCount = 0;
   bool _isLoading = true;
 
   @override
@@ -55,12 +57,12 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
       // Load market statistics
       final stats = await _statsService.getDonorStats(widget.donorId);
       
-      // Load all feedback for this market
-      final feedback = await _deliveryService.getDonorFeedback(widget.donorId);
-      
+      // Feedback loading removed
       setState(() {
         _marketStats = stats;
-        _allFeedback = feedback;
+        _allFeedback = []; // Placeholder - feedback removed
+        _marketAverageRating = 0.0;
+        _marketReviewCount = 0;
         _isLoading = false;
       });
     } catch (e) {
@@ -196,28 +198,56 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
               ],
             ),
           ),
-          if (_marketStats != null && _marketStats!['averageRating'] > 0)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.star, color: Colors.amber, size: 20),
-                  const SizedBox(width: 4),
-                  Text(
-                    _marketStats!['averageRating'].toStringAsFixed(1),
-                    style: const TextStyle(
-                      color: AppTheme.donorGreen,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
+          if (_marketStats != null) 
+            Builder(
+              builder: (context) {
+                // Show market rating if available, otherwise show overall rating
+                final rating = _marketAverageRating > 0 
+                    ? _marketAverageRating 
+                    : ((_marketStats!['averageRating'] as num?)?.toDouble() ?? 0.0);
+                
+                if (rating > 0) {
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.star, color: Colors.amber, size: 20),
+                            const SizedBox(width: 4),
+                            Text(
+                              rating.toStringAsFixed(1),
+                              style: const TextStyle(
+                                color: AppTheme.donorGreen,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_marketAverageRating > 0) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Market Rating',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.8),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                }
+                return const SizedBox.shrink();
+              },
             ),
         ],
       ),
@@ -226,6 +256,15 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
 
   Widget _buildStatisticsTab() {
     if (_marketStats == null) return const Center(child: Text('No statistics available'));
+
+    // Safely extract values with null checks
+    final totalDonations = (_marketStats!['totalDonations'] as num?)?.toInt() ?? 0;
+    final completedDonations = (_marketStats!['completedDonations'] as num?)?.toInt() ?? 0;
+    final availableDonations = (_marketStats!['availableDonations'] as num?)?.toInt() ?? 0;
+    final averageRating = (_marketStats!['averageRating'] as num?)?.toDouble() ?? 0.0;
+    final totalRatings = (_marketStats!['totalRatings'] as num?)?.toInt() ?? 0;
+    final marketRating = _marketAverageRating > 0 ? _marketAverageRating : averageRating;
+    final marketRatingCount = _marketReviewCount > 0 ? _marketReviewCount : totalRatings;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -243,7 +282,7 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
               Expanded(
                 child: _buildStatCard(
                   'Total Donations',
-                  _marketStats!['totalDonations'].toString(),
+                  totalDonations.toString(),
                   Icons.restaurant_menu,
                   Colors.blue,
                 ),
@@ -252,7 +291,7 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
               Expanded(
                 child: _buildStatCard(
                   'Completed',
-                  _marketStats!['completedDonations'].toString(),
+                  completedDonations.toString(),
                   Icons.check_circle,
                   Colors.green,
                 ),
@@ -265,7 +304,7 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
               Expanded(
                 child: _buildStatCard(
                   'Available',
-                  _marketStats!['availableDonations'].toString(),
+                  availableDonations.toString(),
                   Icons.schedule,
                   Colors.orange,
                 ),
@@ -273,10 +312,11 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
               const SizedBox(width: 12),
               Expanded(
                 child: _buildStatCard(
-                  'Avg Rating',
-                  _marketStats!['averageRating'].toStringAsFixed(1),
-                  Icons.star,
+                  'Market Rating',
+                  marketRating > 0 ? marketRating.toStringAsFixed(1) : 'N/A',
+                  Icons.storefront,
                   Colors.amber,
+                  subtitle: marketRatingCount > 0 ? '$marketRatingCount reviews' : 'No reviews',
                 ),
               ),
             ],
@@ -285,7 +325,7 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
           const SizedBox(height: 24),
 
           // Ratings Distribution
-          if (_marketStats!['totalRatings'] > 0) ...[
+          if (totalRatings > 0) ...[
             Text(
               'Rating Distribution',
               style: AppTheme.heading2,
@@ -296,11 +336,11 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
               decoration: AppTheme.cardDecoration,
               child: Column(
                 children: [
-                  _buildRatingBar(5, _marketStats!['averageRating']),
-                  _buildRatingBar(4, _marketStats!['averageRating']),
-                  _buildRatingBar(3, _marketStats!['averageRating']),
-                  _buildRatingBar(2, _marketStats!['averageRating']),
-                  _buildRatingBar(1, _marketStats!['averageRating']),
+                  _buildRatingBar(5, _getRatingCount(5), totalRatings),
+                  _buildRatingBar(4, _getRatingCount(4), totalRatings),
+                  _buildRatingBar(3, _getRatingCount(3), totalRatings),
+                  _buildRatingBar(2, _getRatingCount(2), totalRatings),
+                  _buildRatingBar(1, _getRatingCount(1), totalRatings),
                 ],
               ),
             ),
@@ -331,7 +371,7 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+  Widget _buildStatCard(String title, String value, IconData icon, Color color, {String? subtitle}) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -360,13 +400,37 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
             ),
             textAlign: TextAlign.center,
           ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 10,
+                color: AppTheme.mediumGray.withOpacity(0.8),
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildRatingBar(int stars, double averageRating) {
-    final percentage = stars > averageRating ? 0.0 : (averageRating - stars).clamp(0.0, 1.0);
+  int _getRatingCount(int stars) {
+    if (_allFeedback.isEmpty) return 0;
+    // Count market ratings specifically, fallback to average rating
+    return _allFeedback.where((feedback) {
+      if (feedback.marketRating != null) {
+        return feedback.marketRating == stars;
+      }
+      // Fallback to average rating if market rating not available
+      final avgRating = ((feedback.foodRating + feedback.donorRating) / 2).round();
+      return avgRating == stars;
+    }).length;
+  }
+
+  Widget _buildRatingBar(int stars, int count, int total) {
+    final percentage = total > 0 ? count / total : 0.0;
     
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -391,8 +455,11 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
           ),
           const SizedBox(width: 12),
           Text(
-            '${(percentage * 100).toInt()}%',
-            style: const TextStyle(fontSize: 12),
+            '$count',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
@@ -479,94 +546,204 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
     );
   }
 
-  Widget _buildReviewCard(Map<String, dynamic> feedback) {
-    final receiverName = feedback['receiverName'] as String? ?? 'Anonymous';
-    final rating = feedback['rating'] as int? ?? 0;
-    final comment = feedback['comment'] as String? ?? '';
-    final timestamp = feedback['timestamp'] as Timestamp?;
-    final donationTitle = feedback['donationTitle'] as String? ?? 'Donation';
+  Widget _buildReviewCard(dynamic feedback) {
+    final receiverName = feedback.receiverName;
+    // Use market rating if available, otherwise use average rating
+    final rating = feedback.marketRating ?? 
+        ((feedback.foodRating + feedback.donorRating) / 2).round();
+    final marketReview = feedback.marketReview ?? '';
+    final donorReview = feedback.donorReview ?? '';
+    final foodReview = feedback.foodReview ?? '';
+    // Combine all reviews if available
+    final reviewText = marketReview.isNotEmpty 
+        ? 'Market: $marketReview${donorReview.isNotEmpty ? '\n\nDonor: $donorReview' : ''}${foodReview.isNotEmpty ? '\n\nFood: $foodReview' : ''}'
+        : (donorReview.isNotEmpty ? 'Donor: $donorReview${foodReview.isNotEmpty ? '\n\nFood: $foodReview' : ''}' : foodReview);
+    
+    final timestamp = feedback.createdAt;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: AppTheme.cardDecoration,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance
+          .collection('donations')
+          .doc(feedback.donationId)
+          .get(),
+      builder: (context, snapshot) {
+        final donationTitle = snapshot.hasData && snapshot.data!.exists
+            ? (snapshot.data!.data() as Map<String, dynamic>)['title'] ?? 'Donation'
+            : 'Donation';
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(16),
+          decoration: AppTheme.cardDecoration,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                backgroundColor: AppTheme.donorGreen.withOpacity(0.2),
-                child: const Icon(Icons.person, color: AppTheme.donorGreen),
+              Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: AppTheme.donorGreen.withOpacity(0.2),
+                    child: const Icon(Icons.person, color: AppTheme.donorGreen),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          receiverName,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          _formatDate(timestamp),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.mediumGray,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Row(
+                    children: List.generate(5, (index) {
+                      return Icon(
+                        index < rating ? Icons.star : Icons.star_border,
+                        color: Colors.amber,
+                        size: 16,
+                      );
+                    }),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      receiverName,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+              if (reviewText.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                if (marketReview.isNotEmpty) ...[
+                  // Market Review Section (highlighted)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          AppTheme.donorGreen.withOpacity(0.1),
+                          AppTheme.donorGreen.withOpacity(0.05),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: AppTheme.donorGreen.withOpacity(0.3),
                       ),
                     ),
-                    if (timestamp != null)
-                      Text(
-                        _formatDate(timestamp.toDate()),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppTheme.mediumGray,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.storefront, size: 16, color: AppTheme.donorGreen),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'Market Review:',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.donorGreen,
+                              ),
+                            ),
+                            if (feedback.marketRating != null) ...[
+                              const SizedBox(width: 8),
+                              Row(
+                                children: List.generate(5, (index) {
+                                  return Icon(
+                                    index < feedback.marketRating! 
+                                        ? Icons.star 
+                                        : Icons.star_border,
+                                    color: Colors.amber,
+                                    size: 12,
+                                  );
+                                }),
+                              ),
+                            ],
+                          ],
                         ),
+                        const SizedBox(height: 8),
+                        Text(
+                          marketReview,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: AppTheme.textDarkGray,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (donorReview.isNotEmpty || foodReview.isNotEmpty)
+                    const SizedBox(height: 12),
+                ],
+                if (donorReview.isNotEmpty) ...[
+                  Text(
+                    'Donor Review:',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    donorReview,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: AppTheme.textDarkGray,
+                    ),
+                  ),
+                  if (foodReview.isNotEmpty) const SizedBox(height: 12),
+                ],
+                if (foodReview.isNotEmpty) ...[
+                  Text(
+                    'Food Review:',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    foodReview,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: AppTheme.textDarkGray,
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.restaurant, size: 14, color: AppTheme.mediumGray),
+                    const SizedBox(width: 4),
+                    Text(
+                      donationTitle,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.mediumGray,
                       ),
+                    ),
                   ],
                 ),
               ),
-              Row(
-                children: List.generate(5, (index) {
-                  return Icon(
-                    index < rating ? Icons.star : Icons.star_border,
-                    color: Colors.amber,
-                    size: 16,
-                  );
-                }),
-              ),
             ],
           ),
-          if (comment.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              comment,
-              style: const TextStyle(
-                fontSize: 14,
-                color: AppTheme.textDarkGray,
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.restaurant, size: 14, color: AppTheme.mediumGray),
-                const SizedBox(width: 4),
-                Text(
-                  donationTitle,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppTheme.mediumGray,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 

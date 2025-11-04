@@ -1424,7 +1424,7 @@ void _showSafetyGuidelines() {
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
-            value: _selectedFoodCategory,
+            initialValue: _selectedFoodCategory,
             decoration: InputDecoration(
               hintText: 'Select food category',
               border: OutlineInputBorder(
@@ -1497,7 +1497,7 @@ void _showSafetyGuidelines() {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
-          value: _selectedSpecification,
+          initialValue: _selectedSpecification,
           isExpanded: true,
           itemHeight: 50,
           menuMaxHeight: 250,

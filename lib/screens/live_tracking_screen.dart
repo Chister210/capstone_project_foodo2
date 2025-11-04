@@ -39,8 +39,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> {
   String? _currentUserId;
   
   // Map variables
-  Set<Marker> _markers = {};
-  Set<Polyline> _polylines = {};
+  final Set<Marker> _markers = {};
+  final Set<Polyline> _polylines = {};
   StreamSubscription<Position>? _locationSubscription;
   StreamSubscription<DocumentSnapshot>? _donationSubscription;
 

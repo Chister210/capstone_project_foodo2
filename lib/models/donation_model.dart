@@ -20,7 +20,11 @@ class DonationModel {
   final String? receiverLocationId; // For live tracking
   final String? foodType;
   final String? foodCategory; // New field for food category
-  final String? quantity;
+  final String? quantity; // Original quantity string (e.g., "10 kg", "5 boxes")
+  final int? totalQuantity; // Parsed total quantity as integer
+  final int claimedQuantity; // Total quantity claimed so far
+  final int? remainingQuantity; // Remaining quantity available
+  final Map<String, int>? quantityClaims; // Map of receiverId -> quantity claimed by each receiver
   final String? specification; // New field for donation specification
   final int? maxRecipients; // New field for maximum number of recipients
   final List<String>? allergens;
@@ -33,6 +37,7 @@ class DonationModel {
   final bool donorNotified; // Whether donor was notified about claim
   final bool receiverNotified; // Whether receiver was notified about completion
   final Map<String, dynamic>? trackingData; // Additional tracking information
+  
 
   DonationModel({
     required this.id,
@@ -55,6 +60,10 @@ class DonationModel {
     this.foodType,
     this.foodCategory,
     this.quantity,
+    this.totalQuantity,
+    this.claimedQuantity = 0,
+    this.remainingQuantity,
+    this.quantityClaims,
     this.specification,
     this.maxRecipients,
     this.allergens,
@@ -82,12 +91,24 @@ class DonationModel {
       title: data['title'] ?? '',
       description: data['description'] ?? '',
       imageUrl: data['imageUrl'] ?? '',
-      pickupTime: (data['pickupTime'] as Timestamp).toDate(),
+      pickupTime: data['pickupTime'] != null
+          ? (data['pickupTime'] is Timestamp
+              ? (data['pickupTime'] as Timestamp).toDate()
+              : DateTime.now().add(const Duration(hours: 1)))
+          : DateTime.now().add(const Duration(hours: 1)),
       deliveryType: data['deliveryType'] ?? 'pickup',
       status: data['status'] ?? 'available',
       claimedBy: data['claimedBy'],
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
-      updatedAt: (data['updatedAt'] as Timestamp).toDate(),
+      createdAt: data['createdAt'] != null 
+          ? (data['createdAt'] is Timestamp
+              ? (data['createdAt'] as Timestamp).toDate()
+              : DateTime.now())
+          : DateTime.now(),
+      updatedAt: data['updatedAt'] != null
+          ? (data['updatedAt'] is Timestamp
+              ? (data['updatedAt'] as Timestamp).toDate()
+              : DateTime.now())
+          : DateTime.now(),
       location: data['location'] as GeoPoint?,
       address: data['address'],
       marketLocation: data['marketLocation'] as GeoPoint?,
@@ -96,12 +117,26 @@ class DonationModel {
       foodType: data['foodType'],
       foodCategory: data['foodCategory'],
       quantity: data['quantity'],
+      totalQuantity: data['totalQuantity'],
+      claimedQuantity: data['claimedQuantity'] ?? 0,
+      remainingQuantity: data['remainingQuantity'],
+      quantityClaims: data['quantityClaims'] != null 
+          ? Map<String, int>.from(data['quantityClaims'].map((k, v) => MapEntry(k.toString(), v is int ? v : int.tryParse(v.toString()) ?? 0)))
+          : null,
       specification: data['specification'],
       maxRecipients: data['maxRecipients'],
       allergens: data['allergens'] != null ? List<String>.from(data['allergens']) : null,
       chatId: data['chatId'],
-      claimedAt: data['claimedAt'] != null ? (data['claimedAt'] as Timestamp).toDate() : null,
-      completedAt: data['completedAt'] != null ? (data['completedAt'] as Timestamp).toDate() : null,
+      claimedAt: data['claimedAt'] != null 
+          ? (data['claimedAt'] is Timestamp 
+              ? (data['claimedAt'] as Timestamp).toDate() 
+              : (data['claimedAt'] as Timestamp?)?.toDate())
+          : null,
+      completedAt: data['completedAt'] != null
+          ? (data['completedAt'] is Timestamp
+              ? (data['completedAt'] as Timestamp).toDate()
+              : (data['completedAt'] as Timestamp?)?.toDate())
+          : null,
       receiverLocation: data['receiverLocation'] as GeoPoint?,
       donorNotified: data['donorNotified'] ?? false,
       receiverNotified: data['receiverNotified'] ?? false,
@@ -130,6 +165,10 @@ class DonationModel {
       'foodType': foodType,
       'foodCategory': foodCategory,
       'quantity': quantity,
+      'totalQuantity': totalQuantity,
+      'claimedQuantity': claimedQuantity,
+      'remainingQuantity': remainingQuantity,
+      'quantityClaims': quantityClaims,
       'specification': specification,
       'maxRecipients': maxRecipients,
       'allergens': allergens,
@@ -163,6 +202,10 @@ class DonationModel {
     String? receiverLocationId,
     String? foodType,
     String? quantity,
+    int? totalQuantity,
+    int? claimedQuantity,
+    int? remainingQuantity,
+    Map<String, int>? quantityClaims,
     List<String>? allergens,
     String? chatId,
     DateTime? claimedAt,
@@ -192,6 +235,10 @@ class DonationModel {
       receiverLocationId: receiverLocationId ?? this.receiverLocationId,
       foodType: foodType ?? this.foodType,
       quantity: quantity ?? this.quantity,
+      totalQuantity: totalQuantity ?? this.totalQuantity,
+      claimedQuantity: claimedQuantity ?? this.claimedQuantity,
+      remainingQuantity: remainingQuantity ?? this.remainingQuantity,
+      quantityClaims: quantityClaims ?? this.quantityClaims,
       allergens: allergens ?? this.allergens,
       chatId: chatId ?? this.chatId,
       claimedAt: claimedAt ?? this.claimedAt,
@@ -201,5 +248,36 @@ class DonationModel {
       receiverNotified: receiverNotified ?? this.receiverNotified,
       trackingData: trackingData ?? this.trackingData,
     );
+  }
+  
+  // Helper getter to check if all quantities are claimed
+  bool get isFullyConfirmed {
+    // For donations with quantity tracking, check remaining quantity
+    if (totalQuantity != null && totalQuantity! > 0) {
+      // If there's remaining quantity, donation is not fully confirmed
+      return (remainingQuantity ?? 0) <= 0;
+    }
+    
+    return true;
+  }
+  
+  // Helper getter to check if donation is fully claimed (no remaining quantity)
+  bool get isFullyClaimed {
+    if (totalQuantity == null) return false;
+    return (remainingQuantity ?? 0) <= 0;
+  }
+  
+  // Helper getter to check if donation has partial claims
+  bool get hasPartialClaims => claimedQuantity > 0 && !isFullyClaimed;
+  
+  // Helper method to parse quantity string to integer
+  static int? parseQuantityString(String? quantityStr) {
+    if (quantityStr == null || quantityStr.isEmpty) return null;
+    // Extract numbers from string (e.g., "10 kg" -> 10, "5 boxes" -> 5)
+    final match = RegExp(r'(\d+)').firstMatch(quantityStr);
+    if (match != null) {
+      return int.tryParse(match.group(1) ?? '');
+    }
+    return null;
   }
 }

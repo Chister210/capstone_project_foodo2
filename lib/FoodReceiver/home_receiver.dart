@@ -6,6 +6,7 @@ import 'package:capstone_project/controllers/navigation_controller.dart';
 import 'package:capstone_project/screens/map_screen.dart';
 import 'package:capstone_project/screens/profile_screen.dart';
 import 'package:capstone_project/screens/chat_list_screen.dart';
+import 'package:capstone_project/screens/chat_screen.dart';
 import 'package:capstone_project/screens/statistics_screen.dart';
 import 'package:capstone_project/screens/public_feedback_screen.dart';
 import 'package:capstone_project/utils/responsive_layout.dart';
@@ -14,6 +15,8 @@ import 'package:capstone_project/services/user_service.dart';
 import 'package:capstone_project/screens/receiver_donation_details_screen.dart';
 import 'package:capstone_project/widgets/enhanced_notification_popup.dart';
 import 'package:capstone_project/widgets/donation_card.dart';
+import 'package:capstone_project/widgets/quantity_selector_dialog.dart';
+import 'package:capstone_project/widgets/food_claim_dialog.dart';
 import 'package:capstone_project/services/donation_service.dart';
 import 'package:capstone_project/services/receiver_notification_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -27,13 +30,15 @@ import 'package:flutter/services.dart'; // Add this import for SystemNavigator
 
 class ReceiverHome extends StatefulWidget {
   final String? displayName;
-  const ReceiverHome({Key? key, this.displayName}) : super(key: key);
+  const ReceiverHome({super.key, this.displayName});
 
   @override
   State<ReceiverHome> createState() => _ReceiverHomeState();
 }
 
 class _ReceiverHomeState extends State<ReceiverHome> {
+  // Track which claim popups have been shown in this session (donationId_receiverId)
+  static final Set<String> _shownClaimPopups = {};
   bool sentOnce = false;
   final NavigationController navigationController = Get.put(NavigationController());
   final DonationService _donationService = DonationService();
@@ -43,6 +48,7 @@ class _ReceiverHomeState extends State<ReceiverHome> {
   final UserService _userService = UserService();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  String? _displayName; // Cached display name from Firestore
 
   Future<void> _sendVerificationIfNeeded() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -56,25 +62,47 @@ class _ReceiverHomeState extends State<ReceiverHome> {
     }
   }
 
-  Future<String?> _getUserName() async {
-  try {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      
-      if (userDoc.exists) {
-        return userDoc.data()?['name'] as String?;
+  Future<void> _loadDisplayName() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        
+        if (userDoc.exists && mounted) {
+          final data = userDoc.data();
+          final nameFromDoc = data != null 
+              ? (data['displayName'] ?? data['name']) 
+              : null;
+          
+          // Fallback: use auth displayName or email
+          final fallback = user.displayName ?? user.email?.split('@')[0] ?? 'Receiver';
+          
+          setState(() {
+            _displayName = (nameFromDoc != null && nameFromDoc.toString().isNotEmpty)
+                ? nameFromDoc.toString()
+                : fallback;
+          });
+        } else if (mounted) {
+          // If Firestore doc doesn't exist, use fallback
+          final user = FirebaseAuth.instance.currentUser;
+          setState(() {
+            _displayName = user?.displayName ?? user?.email?.split('@')[0] ?? 'Receiver';
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading display name: $e');
+      if (mounted) {
+        final user = FirebaseAuth.instance.currentUser;
+        setState(() {
+          _displayName = user?.displayName ?? user?.email?.split('@')[0] ?? 'Receiver';
+        });
       }
     }
-    return null;
-  } catch (e) {
-    print('Error fetching user name: $e');
-    return null;
   }
-}
 
   Future<void> _refreshVerification() async {
     await FirebaseAuth.instance.currentUser?.reload();
@@ -101,6 +129,7 @@ class _ReceiverHomeState extends State<ReceiverHome> {
       _sendVerificationIfNeeded();
       _checkTermsAcceptance();
       _initializeNotificationService();
+      _loadDisplayName(); // Fetch display name from Firestore
     });
   }
 
@@ -195,30 +224,76 @@ class _ReceiverHomeState extends State<ReceiverHome> {
         return;
       }
 
-      // Show claim confirmation dialog
-      final confirmed = await _showClaimConfirmationDialog(donation);
-      if (!confirmed) return;
+      // Check availability
+      final hasQuantity = donation.totalQuantity != null && donation.totalQuantity! > 0;
+      final remainingQuantity = donation.remainingQuantity ?? donation.totalQuantity ?? 0;
+      
+      if (hasQuantity && remainingQuantity <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This donation has been fully claimed'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
 
-      await _donationService.claimDonation(donation.id, user.uid);
+      // Show modern claim dialog (combines quantity selection + confirmation)
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => FoodClaimDialog(
+          donation: donation,
+        ),
+      );
+
+      if (result == null || result['success'] != true) {
+        return; // User cancelled
+      }
+
+      final claimQuantity = result['quantity'] as int?;
+
+      // Claim the donation
+      await _donationService.claimDonation(
+        donation.id,
+        user.uid,
+        claimQuantity: claimQuantity,
+      );
 
       if (!mounted) return;
 
-      // Only pop if a dialog is open (i.e., if this is called from a dialog)
-      // Use ModalRoute to check if we're inside a dialog route
-      final isDialog = ModalRoute.of(context)?.settings.name == null;
-      if (isDialog && Navigator.canPop(context)) {
-        Navigator.pop(context);
+      // Get updated donation with chatId
+      final updatedDonation = await _donationService.getDonationById(donation.id);
+      if (updatedDonation == null) {
+        throw Exception('Failed to get updated donation');
       }
+
       // Start live tracking if pickup
-      if (donation.deliveryType == 'pickup') {
+      if (updatedDonation.deliveryType == 'pickup') {
         try {
           final locationTrackingService = LocationTrackingService();
-          await locationTrackingService.startDonationTracking(donation.id);
+          await locationTrackingService.startDonationTracking(updatedDonation.id);
         } catch (e) {
           debugPrint('Error starting live tracking: $e');
         }
       }
-      _showClaimSuccessDialog(donation);
+
+      // Show success dialog with "Go to Messages" button
+      if (!mounted) return;
+      try {
+        await _showClaimSuccessDialog(updatedDonation, claimQuantity);
+      } catch (e) {
+        debugPrint('Error showing claim success dialog: $e');
+        // Still show a basic success message if dialog fails
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Donation claimed successfully! Go to Messages to communicate with the donor.'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
     } catch (e, stack) {
       debugPrint('Error in _claimDonation: $e\n$stack');
       if (mounted) {
@@ -226,147 +301,370 @@ class _ReceiverHomeState extends State<ReceiverHome> {
           SnackBar(
             content: Text('Error claiming donation: $e'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
     }
-  // (No longer needed, direct import used)
-  // Function completes successfully; removed accidental throw to avoid syntax/runtime issues.
   }
 
-  Future<bool> _showClaimConfirmationDialog(DonationModel donation) async {
-    return await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Claim Donation'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Are you sure you want to claim "${donation.title}"?'),
-              const SizedBox(height: 16),
-              if (donation.deliveryType == 'pickup')
-                const Text(
-                  'This is a pickup donation. You will need to go to the market to collect the food.',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange),
-                )
-              else
-                const Text(
-                  'This is a delivery donation. Please wait for the donor to deliver the food to you.',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF22c55e),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Claim'),
-            ),
-          ],
+  Future<void> _showClaimSuccessDialog(DonationModel donation, int? claimQuantity) async {
+    // Check if this popup has already been shown for this claim
+    // Only show popup for NEW claims (when user just claimed), not when navigating to messages later
+    final user = FirebaseAuth.instance.currentUser;
+    final receiverId = user?.uid;
+    if (receiverId == null) return;
+    
+    // Use a unique key: donationId_receiverId
+    final popupKey = '${donation.id}_$receiverId';
+    
+    // Check if popup was already shown in this session
+    if (_shownClaimPopups.contains(popupKey)) {
+      debugPrint('ℹ️ Claim popup already shown for ${donation.id}, skipping...');
+      return;
+    }
+    
+    // Mark as shown
+    _shownClaimPopups.add(popupKey);
+    
+    final hasQuantity = donation.totalQuantity != null && donation.totalQuantity! > 0;
+    // Extract and clean unit, removing any "0" values
+    String unit = '';
+    if (donation.quantity != null) {
+      final quantityStr = donation.quantity!.trim();
+      
+      // Extract text after the first number (which is the quantity)
+      final match = RegExp(r'^\d+\s*(.+)$').firstMatch(quantityStr);
+      if (match != null) {
+        unit = match.group(1)?.trim() ?? '';
+        
+        // Remove any standalone "0" values from the unit
+        // Split by spaces, filter out "0", then rejoin
+        final parts = unit.split(RegExp(r'\s+'))
+            .where((part) => part.trim().isNotEmpty && part.trim() != '0')
+            .toList();
+        
+        unit = parts.join(' ').trim();
+        
+        // Additional cleanup: remove any remaining "0" patterns
+        unit = unit
+            .replaceAll(RegExp(r'^\s*0+\s+'), '') // Remove leading "0 "
+            .replaceAll(RegExp(r'\s+0+\s+'), ' ') // Remove " 0 " in middle
+            .replaceAll(RegExp(r'\s+0+\s*$'), '') // Remove trailing " 0"
+            .trim();
+      }
+    }
+    final unitText = unit.isNotEmpty ? ' $unit' : '';
+    final quantityText = hasQuantity && claimQuantity != null
+        ? '$claimQuantity$unitText'
+        : 'all';
+
+    // Use the UNIQUE chatId format: donorId_receiverId_donationId
+    // This ensures each receiver-donor pair gets their own chat
+    final donorId = donation.donorId;
+    final expectedChatId = '${donorId}_${receiverId}_${donation.id}';
+    
+    String? chatId = expectedChatId;
+    String? donorName;
+
+    // Ensure chat exists (it should be created during claim, but verify)
+    try {
+      final chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(expectedChatId)
+          .get();
+      
+      if (chatDoc.exists) {
+        final chatData = chatDoc.data()!;
+        donorName = chatData['donorName'] as String?;
+        
+        // If donorName is still null, fetch from users collection
+        if (donorName == null) {
+          final donorDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(donorId)
+              .get();
+          if (donorDoc.exists) {
+            final donorData = donorDoc.data()!;
+            donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+          }
+        }
+      } else {
+        // Chat doesn't exist yet, create it now
+        final MessagingService messagingService = MessagingService();
+        
+        // Get donor name first
+        final donorDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(donorId)
+            .get();
+        if (donorDoc.exists) {
+          final donorData = donorDoc.data()!;
+          donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+        }
+        
+        // Get receiver name
+        final receiverDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(receiverId)
+            .get();
+        final receiverData = receiverDoc.exists ? receiverDoc.data()! : {};
+        final receiverName = receiverData['displayName'] ?? receiverData['email']?.split('@')[0] ?? 'Receiver';
+        
+        // Create the chat
+        chatId = await messagingService.createChat(
+          donationId: donation.id,
+          donorId: donorId,
+          receiverId: receiverId,
+          donorName: donorName ?? 'Donor',
+          receiverName: receiverName,
         );
-      },
-    ) ?? false;
-  }
+      }
+    } catch (e) {
+      debugPrint('Error getting/creating chat: $e');
+      // Fallback: try to get donor name directly
+      try {
+        final donorDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(donorId)
+            .get();
+        if (donorDoc.exists) {
+          final donorData = donorDoc.data()!;
+          donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+        }
+      } catch (e2) {
+        debugPrint('Error getting donor name: $e2');
+      }
+    }
 
-  void _showClaimSuccessDialog(DonationModel donation) {
+    if (!mounted) return;
+
+    // Store the widget's context for navigation
+    final widgetContext = context;
+
+    // Show popup dialog
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Donation Claimed!'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.check_circle,
-                color: Colors.green,
-                size: 48,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white,
+                  Colors.grey[50]!,
+                ],
               ),
-              const SizedBox(height: 16),
-              Text('You have successfully claimed "${donation.title}"'),
-              const SizedBox(height: 16),
-              if (donation.deliveryType == 'pickup')
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Icon with gradient background
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange),
-                  ),
-                  child: const Column(
-                    children: [
-                      Icon(Icons.location_on, color: Colors.orange),
-                      SizedBox(height: 8),
-                      Text(
-                        'Go to Market',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange),
-                      ),
-                      Text(
-                        'Please go to the market to collect your food donation.',
-                        textAlign: TextAlign.center,
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF22c55e).withOpacity(0.3),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
                       ),
                     ],
                   ),
-                )
-              else
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue),
+                  child: const Icon(
+                    Icons.check_circle,
+                    color: Colors.white,
+                    size: 48,
                   ),
-                  child: const Column(
-                    children: [
-                      Icon(Icons.delivery_dining, color: Colors.blue),
-                      SizedBox(height: 8),
-                      Text(
-                        'Wait for Delivery',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
+                ),
+                const SizedBox(height: 20),
+                // Title
+                const Text(
+                  'Donation Claimed! ✅',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                    letterSpacing: 0.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                // Content
+                Text(
+                  'You claimed $quantityText of "${donation.title}"',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey[700],
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                // Message box with gradient
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blue[50]!, Colors.blue[100]!],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.blue[300]!, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
                       ),
-                      Text(
-                        'Please wait for the donor to deliver the food to you.',
-                        textAlign: TextAlign.center,
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue[600],
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.chat_bubble_outline, color: Colors.white, size: 24),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Go to messages to start communicating with ${donorName ?? 'the donor'}!',
+                              style: TextStyle(
+                                color: Colors.blue[900],
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
-              const SizedBox(height: 16),
-              const Text(
-                'You can now chat with the donor to coordinate the pickup/delivery.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                // Navigate to messages tab
-                navigationController.changePage(2);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF22c55e),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('View Messages'),
+                const SizedBox(height: 24),
+                // Action buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(color: Colors.grey[300]!, width: 2),
+                          ),
+                        ),
+                        child: Text(
+                          'Later',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF22c55e).withOpacity(0.4),
+                              blurRadius: 12,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            Navigator.pop(dialogContext); // Close dialog first
+                            
+                            // Use a small delay to ensure dialog is fully closed
+                            await Future.delayed(const Duration(milliseconds: 100));
+                            
+                            // Always use the expected chatId format (donorId_receiverId_donationId)
+                            if (receiverId != null) {
+                              final finalChatId = chatId ?? '${donorId}_${receiverId}_${donation.id}';
+                              final finalDonorName = donorName ?? 'Donor';
+                              
+                              if (mounted) {
+                                Navigator.push(
+                                  widgetContext,
+                                  MaterialPageRoute(
+                                    builder: (context) => ChatScreen(
+                                      chatId: finalChatId,
+                                      otherUserName: finalDonorName,
+                                      otherUserType: 'donor',
+                                    ),
+                                  ),
+                                );
+                              }
+                            } else {
+                              // Fallback: navigate to messages tab if chat not ready
+                              if (mounted) {
+                                navigationController.changePage(2); // Messages tab
+                              }
+                            }
+                          },
+                          icon: const Icon(Icons.chat, size: 20),
+                          label: const Text(
+                            'Go to Messages',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ],
+          ),
         );
       },
     );
   }
+
 
   String _formatDateTime(DateTime dateTime) {
     return '${dateTime.day}/${dateTime.month}/${dateTime.year} at ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
@@ -423,8 +721,8 @@ class _ReceiverHomeState extends State<ReceiverHome> {
   }
 
  Widget _buildHomeScreen(User? user, bool isUnverified) {
-  // prefer explicit prop from main.dart -> Firestore cache -> auth -> email fallback
-  final displayName = widget.displayName ?? user?.displayName ?? user?.email?.split('@')[0] ?? 'Receiver';
+  // Priority: widget prop -> Firestore cached _displayName -> auth displayName -> email fallback
+  final displayName = widget.displayName ?? _displayName ?? user?.displayName ?? user?.email?.split('@')[0] ?? 'Receiver';
 
   return Scaffold(
     appBar: AppBar(
