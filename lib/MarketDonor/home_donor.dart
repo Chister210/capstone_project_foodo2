@@ -175,34 +175,9 @@ class _DonorHomeState extends State<DonorHome> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Icon with gradient background
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF22c55e).withOpacity(0.3),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.check_circle,
-                    color: Colors.white,
-                    size: 48,
-                  ),
-                ),
-                const SizedBox(height: 20),
                 // Title
                 const Text(
-                  'Donation Claimed! ✅',
+                  'Donation Claimed!',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -269,108 +244,76 @@ class _DonorHomeState extends State<DonorHome> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                // Action buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          Navigator.pop(dialogContext);
-                          // Mark notification as read
-                          FirebaseFirestore.instance
-                              .collection('notifications')
-                              .doc(notificationId)
-                              .update({'isRead': true});
-                        },
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(color: Colors.grey[300]!, width: 2),
-                          ),
+                // Action button
+                SizedBox(
+                  width: double.infinity,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF22c55e).withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 6),
                         ),
-                        child: Text(
-                          'Later',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey[700],
-                          ),
+                      ],
+                    ),
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(dialogContext);
+                        
+                        // Mark notification as read
+                        FirebaseFirestore.instance
+                            .collection('notifications')
+                            .doc(notificationId)
+                            .update({'isRead': true});
+                        
+                        await Future.delayed(const Duration(milliseconds: 200));
+                        
+                        if (!mounted) return;
+                        
+                        if (finalChatId != null && finalChatId.isNotEmpty) {
+                          // Navigate to specific chat
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ChatScreen(
+                                chatId: finalChatId!,
+                                otherUserName: finalReceiverName,
+                                otherUserType: 'receiver',
+                              ),
+                            ),
+                          );
+                        } else {
+                          // Fallback: go to messages tab
+                          navigationController.changePage(2);
+                        }
+                      },
+                      icon: const Icon(Icons.chat, size: 20),
+                      label: const Text(
+                        'Go to Messages',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF22c55e).withOpacity(0.4),
-                              blurRadius: 12,
-                              offset: const Offset(0, 6),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton.icon(
-                          onPressed: () async {
-                            Navigator.pop(dialogContext);
-                            
-                            // Mark notification as read
-                            FirebaseFirestore.instance
-                                .collection('notifications')
-                                .doc(notificationId)
-                                .update({'isRead': true});
-                            
-                            await Future.delayed(const Duration(milliseconds: 200));
-                            
-                            if (!mounted) return;
-                            
-                            if (finalChatId != null && finalChatId.isNotEmpty) {
-                              // Navigate to specific chat
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ChatScreen(
-                                    chatId: finalChatId!,
-                                    otherUserName: finalReceiverName,
-                                    otherUserType: 'receiver',
-                                  ),
-                                ),
-                              );
-                            } else {
-                              // Fallback: go to messages tab
-                              navigationController.changePage(2);
-                            }
-                          },
-                          icon: const Icon(Icons.chat, size: 20),
-                          label: const Text(
-                            'Go to Messages',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ],
             ),

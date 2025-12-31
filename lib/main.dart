@@ -10,8 +10,10 @@ import 'package:capstone_project/config/firebase_config.dart';
 import 'package:capstone_project/services/receiver_notification_service.dart';
 import 'package:capstone_project/services/donor_notification_service.dart';
 import 'package:capstone_project/services/push_token_service.dart';
+import 'package:capstone_project/services/donation_expiration_service.dart';
 import 'package:capstone_project/theme/app_theme.dart';
 import 'package:capstone_project/screens/splash_screen.dart';
+import 'dart:async';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +31,15 @@ void main() async {
   
   // Initialize database (optional - for development/testing)
   // await DatabaseSetupService.initializeDatabase();
+  
+  // Start periodic expiration check (every 5 minutes)
+  final expirationService = DonationExpirationService();
+  Timer.periodic(const Duration(minutes: 5), (timer) {
+    expirationService.checkAndDeleteExpiredDonations();
+  });
+  
+  // Also check immediately on app start
+  expirationService.checkAndDeleteExpiredDonations();
   
   runApp(const MyApp());
 }

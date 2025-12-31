@@ -154,12 +154,41 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Widget _buildChatItem(ChatModel chat) {
-    final otherUserName = _userType == 'donor' 
-        ? chat.receiverName 
-        : chat.donorName;
+    String otherUserName;
     final otherUserType = _userType == 'donor' 
         ? 'receiver' 
         : 'donor';
+    
+    if (_userType == 'donor') {
+      otherUserName = chat.receiverName;
+    } else {
+      // For receivers viewing donors, use market name if available
+      // Try to fetch from donor document, otherwise use stored donorName
+      otherUserName = chat.donorName;
+      
+      // If we can fetch market name, do it (but don't block UI)
+      if (chat.donorId.isNotEmpty) {
+        FirebaseFirestore.instance
+            .collection('users')
+            .doc(chat.donorId)
+            .get()
+            .then((donorDoc) {
+          if (donorDoc.exists && mounted) {
+            final donorData = donorDoc.data()!;
+            final marketName = donorData['marketName'] as String?;
+            if (marketName != null && marketName.isNotEmpty && marketName != chat.donorName) {
+              // Update chat document with market name for future use
+              FirebaseFirestore.instance
+                  .collection('chats')
+                  .doc(chat.id)
+                  .update({'donorName': marketName});
+            }
+          }
+        }).catchError((e) {
+          // Ignore errors, just use stored name
+        });
+      }
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

@@ -264,6 +264,29 @@ class DonationCard extends StatelessWidget {
                     ],
                   ),
                   
+                  // Expiration Time (if available)
+                  if (donation.expirationDateTime != null) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.timer_off_rounded,
+                          size: 16,
+                          color: Colors.orange[700],
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Expires: ${_formatPickupTime(donation.expirationDateTime!)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.orange[700],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  
                   // Location Info (if available)
                   if (donation.address != null && donation.address!.isNotEmpty)
                     Column(

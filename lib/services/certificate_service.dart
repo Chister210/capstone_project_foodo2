@@ -93,7 +93,8 @@ class CertificateService {
       }
 
       final donorData = donorDoc.data()!;
-      final donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+      // Use marketName instead of displayName for donors
+      final donorName = donorData['marketName'] ?? donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
       final donorEmail = donorData['email'] ?? '';
 
       // Get milestones already awarded to this donor

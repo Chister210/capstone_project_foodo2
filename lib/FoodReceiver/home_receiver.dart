@@ -37,8 +37,6 @@ class ReceiverHome extends StatefulWidget {
 }
 
 class _ReceiverHomeState extends State<ReceiverHome> {
-  // Track which claim popups have been shown in this session (donationId_receiverId)
-  static final Set<String> _shownClaimPopups = {};
   bool sentOnce = false;
   final NavigationController navigationController = Get.put(NavigationController());
   final DonationService _donationService = DonationService();
@@ -309,23 +307,14 @@ class _ReceiverHomeState extends State<ReceiverHome> {
   }
 
   Future<void> _showClaimSuccessDialog(DonationModel donation, int? claimQuantity) async {
-    // Check if this popup has already been shown for this claim
-    // Only show popup for NEW claims (when user just claimed), not when navigating to messages later
+    // Show popup for every new claim
+    // The popup should always appear when a user successfully claims a donation
     final user = FirebaseAuth.instance.currentUser;
     final receiverId = user?.uid;
     if (receiverId == null) return;
     
-    // Use a unique key: donationId_receiverId
-    final popupKey = '${donation.id}_$receiverId';
-    
-    // Check if popup was already shown in this session
-    if (_shownClaimPopups.contains(popupKey)) {
-      debugPrint('ℹ️ Claim popup already shown for ${donation.id}, skipping...');
-      return;
-    }
-    
-    // Mark as shown
-    _shownClaimPopups.add(popupKey);
+    // Note: We removed the popup tracking to allow users to claim donations multiple times
+    // Each new claim should show the popup, even if it's the same donation or same donor
     
     final hasQuantity = donation.totalQuantity != null && donation.totalQuantity! > 0;
     // Extract and clean unit, removing any "0" values
@@ -378,7 +367,7 @@ class _ReceiverHomeState extends State<ReceiverHome> {
         final chatData = chatDoc.data()!;
         donorName = chatData['donorName'] as String?;
         
-        // If donorName is still null, fetch from users collection
+        // If donorName is still null, fetch from users collection (use marketName)
         if (donorName == null) {
           final donorDoc = await FirebaseFirestore.instance
               .collection('users')
@@ -386,21 +375,21 @@ class _ReceiverHomeState extends State<ReceiverHome> {
               .get();
           if (donorDoc.exists) {
             final donorData = donorDoc.data()!;
-            donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+            donorName = donorData['marketName'] ?? donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
           }
         }
       } else {
         // Chat doesn't exist yet, create it now
         final MessagingService messagingService = MessagingService();
         
-        // Get donor name first
+        // Get donor market name first (use marketName instead of displayName)
         final donorDoc = await FirebaseFirestore.instance
             .collection('users')
             .doc(donorId)
             .get();
         if (donorDoc.exists) {
           final donorData = donorDoc.data()!;
-          donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+          donorName = donorData['marketName'] ?? donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
         }
         
         // Get receiver name
@@ -422,7 +411,7 @@ class _ReceiverHomeState extends State<ReceiverHome> {
       }
     } catch (e) {
       debugPrint('Error getting/creating chat: $e');
-      // Fallback: try to get donor name directly
+      // Fallback: try to get donor market name directly
       try {
         final donorDoc = await FirebaseFirestore.instance
             .collection('users')
@@ -430,7 +419,7 @@ class _ReceiverHomeState extends State<ReceiverHome> {
             .get();
         if (donorDoc.exists) {
           final donorData = donorDoc.data()!;
-          donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+          donorName = donorData['marketName'] ?? donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
         }
       } catch (e2) {
         debugPrint('Error getting donor name: $e2');
@@ -467,34 +456,9 @@ class _ReceiverHomeState extends State<ReceiverHome> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Icon with gradient background
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF22c55e).withOpacity(0.3),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.check_circle,
-                    color: Colors.white,
-                    size: 48,
-                  ),
-                ),
-                const SizedBox(height: 20),
                 // Title
                 const Text(
-                  'Donation Claimed! ✅',
+                  'Donation Claimed!',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -561,101 +525,76 @@ class _ReceiverHomeState extends State<ReceiverHome> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                // Action buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(dialogContext),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(color: Colors.grey[300]!, width: 2),
-                          ),
+                // Action button
+                SizedBox(
+                  width: double.infinity,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF22c55e).withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 6),
                         ),
-                        child: Text(
-                          'Later',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey[700],
-                          ),
+                      ],
+                    ),
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(dialogContext); // Close dialog first
+                        
+                        // Use a small delay to ensure dialog is fully closed
+                        await Future.delayed(const Duration(milliseconds: 100));
+                        
+                        // Always use the expected chatId format (donorId_receiverId_donationId)
+                        if (receiverId != null) {
+                          final finalChatId = chatId ?? '${donorId}_${receiverId}_${donation.id}';
+                          final finalDonorName = donorName ?? 'Donor';
+                          
+                          if (mounted) {
+                            Navigator.push(
+                              widgetContext,
+                              MaterialPageRoute(
+                                builder: (context) => ChatScreen(
+                                  chatId: finalChatId,
+                                  otherUserName: finalDonorName,
+                                  otherUserType: 'donor',
+                                ),
+                              ),
+                            );
+                          }
+                        } else {
+                          // Fallback: navigate to messages tab if chat not ready
+                          if (mounted) {
+                            navigationController.changePage(2); // Messages tab
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.chat, size: 20),
+                      label: const Text(
+                        'Go to Messages',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF22c55e), Color(0xFF16a34a)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF22c55e).withOpacity(0.4),
-                              blurRadius: 12,
-                              offset: const Offset(0, 6),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton.icon(
-                          onPressed: () async {
-                            Navigator.pop(dialogContext); // Close dialog first
-                            
-                            // Use a small delay to ensure dialog is fully closed
-                            await Future.delayed(const Duration(milliseconds: 100));
-                            
-                            // Always use the expected chatId format (donorId_receiverId_donationId)
-                            if (receiverId != null) {
-                              final finalChatId = chatId ?? '${donorId}_${receiverId}_${donation.id}';
-                              final finalDonorName = donorName ?? 'Donor';
-                              
-                              if (mounted) {
-                                Navigator.push(
-                                  widgetContext,
-                                  MaterialPageRoute(
-                                    builder: (context) => ChatScreen(
-                                      chatId: finalChatId,
-                                      otherUserName: finalDonorName,
-                                      otherUserType: 'donor',
-                                    ),
-                                  ),
-                                );
-                              }
-                            } else {
-                              // Fallback: navigate to messages tab if chat not ready
-                              if (mounted) {
-                                navigationController.changePage(2); // Messages tab
-                              }
-                            }
-                          },
-                          icon: const Icon(Icons.chat, size: 20),
-                          label: const Text(
-                            'Go to Messages',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ],
             ),

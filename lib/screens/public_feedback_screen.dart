@@ -190,9 +190,12 @@ class _PublicFeedbackScreenState extends State<PublicFeedbackScreen> {
               FutureBuilder<DocumentSnapshot>(
                 future: FirebaseFirestore.instance.collection('users').doc(feedback.donorId).get(),
                 builder: (context, snapshot) {
-                  final donorName = snapshot.hasData && snapshot.data!.exists
-                      ? (snapshot.data!.data() as Map<String, dynamic>)['displayName'] ?? 'Donor'
-                      : 'Donor';
+                  String donorName = 'Donor';
+                  if (snapshot.hasData && snapshot.data!.exists) {
+                    final donorData = snapshot.data!.data() as Map<String, dynamic>;
+                    // Use marketName instead of displayName for donors
+                    donorName = donorData['marketName'] ?? donorData['displayName'] ?? 'Donor';
+                  }
                   return Text(
                     'Donated by $donorName',
                     style: const TextStyle(color: Colors.grey, fontSize: 12),

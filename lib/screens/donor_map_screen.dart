@@ -322,7 +322,7 @@ class _DonorMapScreenState extends State<DonorMapScreen> {
           : 'all';
       
       Get.snackbar(
-        'Successfully Claimed! ✅',
+        'Successfully Claimed!',
         'You claimed $quantityText of "${donation.title}"',
         backgroundColor: const Color(0xFF22c55e),
         colorText: Colors.white,

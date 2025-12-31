@@ -390,8 +390,26 @@ class EnhancedNotificationPopup extends StatelessWidget {
         otherUserType = 'receiver';
       } else {
         // Current user is receiver, other is donor
+        // Try to get market name from donor document if available
         otherUserName = chatData['donorName'] ?? 'Donor';
         otherUserType = 'donor';
+        
+        // If we have donorId, try to fetch market name
+        final donorId = chatData['donorId'] as String?;
+        if (donorId != null && otherUserName == 'Donor') {
+          try {
+            final donorDoc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(donorId)
+                .get();
+            if (donorDoc.exists) {
+              final donorData = donorDoc.data()!;
+              otherUserName = donorData['marketName'] ?? donorData['displayName'] ?? 'Donor';
+            }
+          } catch (e) {
+            // Keep default if error
+          }
+        }
       }
 
       // Navigate to chat screen

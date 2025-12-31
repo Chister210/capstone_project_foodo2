@@ -649,68 +649,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 icon: Icons.fastfood,
                 onTap: () => Get.to(() => const DonationHistoryScreen()),
               ),
-              
-              // Feedback Section for Donors
-              const SizedBox(height: 16),
-              Card(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: ExpansionTile(
-                  leading: const Icon(Icons.rate_review, color: Color(0xFF22c55e)),
-                  title: const Text('Feedback & Ratings'),
-                  subtitle: StreamBuilder<DocumentSnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('users')
-                        .doc(_user!.id)
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return const Text('Loading...');
-                      }
-                      final data = snapshot.data!.data() as Map<String, dynamic>?;
-                      final avgRating = data?['averageOverallRating'] ?? 0.0;
-                      final feedbackCount = data?['totalFeedbackCount'] ?? 0;
-                      
-                      if (feedbackCount == 0) {
-                        return const Text('No feedback yet');
-                      }
-                      
-                      return Row(
-                        children: [
-                          const Icon(Icons.star, color: Colors.amber, size: 16),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${avgRating.toStringAsFixed(1)}/5.0',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(width: 8),
-                          Text('($feedbackCount reviews)'),
-                        ],
-                      );
-                    },
-                  ),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: SizedBox(
-                        height: 300,
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.feedback_outlined, size: 48, color: Colors.grey[400]),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Feedback feature has been removed',
-                                style: TextStyle(color: Colors.grey[600], fontSize: 16),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ],
 
             const SizedBox(height: 32),

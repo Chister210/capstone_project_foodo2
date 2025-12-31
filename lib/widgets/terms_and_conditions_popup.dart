@@ -381,7 +381,7 @@ class _TermsAndConditionsPopupState extends State<TermsAndConditionsPopup> {
                                 SizedBox(height: screenHeight * 0.02),
                                 _buildTermsSection(
                                   title: '3. Food Safety',
-                                  content: termsContent['safety'] ?? 'All food donations must comply with local food safety regulations. Donors must ensure food is fresh, properly stored, and free from contamination. Receivers should inspect donations upon receipt and report any concerns immediately.',
+                                  content: termsContent['safety'] ?? 'All food donations must comply with local food safety regulations. Donors must ensure food is fresh, properly stored, and free from contamination. Receivers should inspect donations when receiving them and report any concerns immediately.',
                                 ),
                                 SizedBox(height: screenHeight * 0.02),
                                 _buildTermsSection(

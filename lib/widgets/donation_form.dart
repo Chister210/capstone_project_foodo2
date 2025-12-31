@@ -40,7 +40,7 @@ class _DonationFormState extends State<DonationForm> {
 
   File? _selectedImage;
   DateTime? _selectedPickupTime;
-  DateTime? _selectedExpirationDate;
+  DateTime? _selectedExpirationDateTime;
   DateTime? _selectedPreparationDate;
   String _deliveryType = 'pickup';
   String _foodQuality = 'fresh';
@@ -353,18 +353,46 @@ Future<void> _selectPickupTime() async {
   }
 }
 
-  Future<void> _selectExpirationDate() async {
-    final DateTime? picked = await showDatePicker(
+  Future<void> _selectExpirationDateTime() async {
+    // First select date
+    final DateTime? pickedDate = await showDatePicker(
       context: context,
-      initialDate: DateTime.now().add(const Duration(days: 1)),
+      initialDate: DateTime.now().add(const Duration(hours: 1)),
       firstDate: DateTime.now(),
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
     
-    if (picked != null) {
+    if (pickedDate == null) return;
+    
+    // Then select time
+    final TimeOfDay? pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    
+    if (pickedTime != null) {
+      final DateTime combinedDateTime = DateTime(
+        pickedDate.year,
+        pickedDate.month,
+        pickedDate.day,
+        pickedTime.hour,
+        pickedTime.minute,
+      );
+      
+      // Validate that expiration is in the future
+      if (combinedDateTime.isBefore(DateTime.now())) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Expiration time must be in the future'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      
       setState(() {
-        _selectedExpirationDate = picked;
-        _expirationDateController.text = DateFormat('MMM dd, yyyy').format(picked);
+        _selectedExpirationDateTime = combinedDateTime;
+        _expirationDateController.text = DateFormat('MMM dd, yyyy - h:mm a').format(combinedDateTime);
         _updateFoodQualityStatus();
       });
     }
@@ -405,20 +433,21 @@ Future<void> _selectPickupTime() async {
 
   // Food quality methods
   void _updateFoodQualityStatus() {
-    if (_selectedExpirationDate == null) return;
+    if (_selectedExpirationDateTime == null) return;
     
     final now = DateTime.now();
-    final daysUntilExpiry = _selectedExpirationDate!.difference(now).inDays;
+    final timeUntilExpiry = _selectedExpirationDateTime!.difference(now);
+    final hoursUntilExpiry = timeUntilExpiry.inHours;
     
-    if (daysUntilExpiry < 0) {
+    if (timeUntilExpiry.isNegative) {
       setState(() {
         _foodQuality = 'expired';
       });
-    } else if (daysUntilExpiry <= 1) {
+    } else if (hoursUntilExpiry <= 24) {
       setState(() {
         _foodQuality = 'expiring_soon';
       });
-    } else if (daysUntilExpiry <= 3) {
+    } else if (hoursUntilExpiry <= 72) {
       setState(() {
         _foodQuality = 'fresh_but_soon';
       });
@@ -575,9 +604,17 @@ void _showSafetyGuidelines() {
       );
       return;
     }
-    if (_selectedExpirationDate == null) {
+    if (_selectedExpirationDateTime == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select expiration date')),
+        const SnackBar(content: Text('Please select expiration date and time')),
+      );
+      return;
+    }
+    
+    // Validate expiration time is in the future
+    if (_selectedExpirationDateTime!.isBefore(DateTime.now())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Expiration time must be in the future')),
       );
       return;
     }
@@ -592,6 +629,7 @@ void _showSafetyGuidelines() {
         description: _descriptionController.text.trim(),
         imageFile: _selectedImage!,
         pickupTime: _selectedPickupTime!,
+        expirationDateTime: _selectedExpirationDateTime!,
         deliveryType: _deliveryType,
         address: _deliveryType == 'delivery' ? _addressController.text.trim() : null,
         // market location/address removed from donation form
@@ -698,7 +736,7 @@ void _showSafetyGuidelines() {
     setState(() {
       _selectedImage = null;
       _selectedPickupTime = null;
-      _selectedExpirationDate = null;
+        _selectedExpirationDateTime = null;
       _selectedPreparationDate = null;
       _deliveryType = 'pickup';
       _foodQuality = 'fresh';
@@ -1018,7 +1056,7 @@ void _showSafetyGuidelines() {
           ),
           const SizedBox(height: 12),
           InkWell(
-            onTap: _selectExpirationDate,
+                    onTap: _selectExpirationDateTime,
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -1034,11 +1072,11 @@ void _showSafetyGuidelines() {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      _selectedExpirationDate != null
-                          ? DateFormat('MMM dd, yyyy').format(_selectedExpirationDate!)
-                          : 'Select expiration date',
+                      _selectedExpirationDateTime != null
+                          ? DateFormat('MMM dd, yyyy - h:mm a').format(_selectedExpirationDateTime!)
+                          : 'Select expiration date & time',
                       style: TextStyle(
-                        color: _selectedExpirationDate != null ? Colors.black : Colors.grey,
+                        color: _selectedExpirationDateTime != null ? Colors.black : Colors.grey,
                         fontSize: 16,
                       ),
                     ),
@@ -2038,7 +2076,7 @@ void _showSafetyGuidelines() {
                   const SizedBox(height: 16),
                   
                   // Food Quality Status
-                  if (_selectedExpirationDate != null) _buildFoodQualitySection(),
+                  if (_selectedExpirationDateTime != null) _buildFoodQualitySection(),
                   
                   // Temperature Control Section
                   _buildTemperatureSection(),

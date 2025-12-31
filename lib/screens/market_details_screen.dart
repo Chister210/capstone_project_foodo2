@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 import '../services/donor_stats_service.dart';
-// import '../services/feedback_service.dart'; // Removed - feedback service deleted
+import '../services/feedback_service.dart';
 import '../models/donation_model.dart';
-// import '../models/feedback_model.dart'; // Removed - feedback model deleted
+import '../models/feedback_model.dart';
 import '../theme/app_theme.dart';
 
 class MarketDetailsScreen extends StatefulWidget {
@@ -28,14 +29,15 @@ class MarketDetailsScreen extends StatefulWidget {
 
 class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTickerProviderStateMixin {
   final DonorStatsService _statsService = Get.put(DonorStatsService());
-  // final FeedbackService _feedbackService = FeedbackService(); // Removed
+  final FeedbackService _feedbackService = FeedbackService();
   late TabController _tabController;
 
   Map<String, dynamic>? _marketStats;
-  List<dynamic> _allFeedback = [];
+  List<FeedbackModel> _allFeedback = [];
   double _marketAverageRating = 0.0;
   int _marketReviewCount = 0;
   bool _isLoading = true;
+  StreamSubscription<List<FeedbackModel>>? _feedbackSubscription;
 
   @override
   void initState() {
@@ -47,6 +49,7 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
   @override
   void dispose() {
     _tabController.dispose();
+    _feedbackSubscription?.cancel();
     super.dispose();
   }
 
@@ -57,12 +60,24 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
       // Load market statistics
       final stats = await _statsService.getDonorStats(widget.donorId);
       
-      // Feedback loading removed
+      // Load feedback and calculate average rating
+      final averageRating = await _feedbackService.getAverageRating(widget.donorId);
+      final reviewCount = await _feedbackService.getReviewCount(widget.donorId);
+      
+      // Load feedback list
+      _feedbackSubscription?.cancel();
+      _feedbackSubscription = _feedbackService.getFeedbackForDonor(widget.donorId).listen((feedbackList) {
+        if (mounted) {
+          setState(() {
+            _allFeedback = feedbackList;
+          });
+        }
+      });
+      
       setState(() {
         _marketStats = stats;
-        _allFeedback = []; // Placeholder - feedback removed
-        _marketAverageRating = 0.0;
-        _marketReviewCount = 0;
+        _marketAverageRating = averageRating;
+        _marketReviewCount = reviewCount;
         _isLoading = false;
       });
     } catch (e) {
@@ -325,7 +340,7 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
           const SizedBox(height: 24),
 
           // Ratings Distribution
-          if (totalRatings > 0) ...[
+          if (marketRatingCount > 0) ...[
             Text(
               'Rating Distribution',
               style: AppTheme.heading2,
@@ -336,11 +351,11 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
               decoration: AppTheme.cardDecoration,
               child: Column(
                 children: [
-                  _buildRatingBar(5, _getRatingCount(5), totalRatings),
-                  _buildRatingBar(4, _getRatingCount(4), totalRatings),
-                  _buildRatingBar(3, _getRatingCount(3), totalRatings),
-                  _buildRatingBar(2, _getRatingCount(2), totalRatings),
-                  _buildRatingBar(1, _getRatingCount(1), totalRatings),
+                  _buildRatingBar(5, _getRatingCount(5), marketRatingCount),
+                  _buildRatingBar(4, _getRatingCount(4), marketRatingCount),
+                  _buildRatingBar(3, _getRatingCount(3), marketRatingCount),
+                  _buildRatingBar(2, _getRatingCount(2), marketRatingCount),
+                  _buildRatingBar(1, _getRatingCount(1), marketRatingCount),
                 ],
               ),
             ),
@@ -418,14 +433,9 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
 
   int _getRatingCount(int stars) {
     if (_allFeedback.isEmpty) return 0;
-    // Count market ratings specifically, fallback to average rating
+    // Count ratings for the specific star count
     return _allFeedback.where((feedback) {
-      if (feedback.marketRating != null) {
-        return feedback.marketRating == stars;
-      }
-      // Fallback to average rating if market rating not available
-      final avgRating = ((feedback.foodRating + feedback.donorRating) / 2).round();
-      return avgRating == stars;
+      return feedback.rating == stars;
     }).length;
   }
 
@@ -546,19 +556,10 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
     );
   }
 
-  Widget _buildReviewCard(dynamic feedback) {
+  Widget _buildReviewCard(FeedbackModel feedback) {
     final receiverName = feedback.receiverName;
-    // Use market rating if available, otherwise use average rating
-    final rating = feedback.marketRating ?? 
-        ((feedback.foodRating + feedback.donorRating) / 2).round();
-    final marketReview = feedback.marketReview ?? '';
-    final donorReview = feedback.donorReview ?? '';
-    final foodReview = feedback.foodReview ?? '';
-    // Combine all reviews if available
-    final reviewText = marketReview.isNotEmpty 
-        ? 'Market: $marketReview${donorReview.isNotEmpty ? '\n\nDonor: $donorReview' : ''}${foodReview.isNotEmpty ? '\n\nFood: $foodReview' : ''}'
-        : (donorReview.isNotEmpty ? 'Donor: $donorReview${foodReview.isNotEmpty ? '\n\nFood: $foodReview' : ''}' : foodReview);
-    
+    final rating = feedback.rating;
+    final comment = feedback.comment ?? '';
     final timestamp = feedback.createdAt;
 
     return FutureBuilder<DocumentSnapshot>(
@@ -617,106 +618,15 @@ class _MarketDetailsScreenState extends State<MarketDetailsScreen> with SingleTi
                   ),
                 ],
               ),
-              if (reviewText.isNotEmpty) ...[
+              if (comment.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                if (marketReview.isNotEmpty) ...[
-                  // Market Review Section (highlighted)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          AppTheme.donorGreen.withOpacity(0.1),
-                          AppTheme.donorGreen.withOpacity(0.05),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: AppTheme.donorGreen.withOpacity(0.3),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.storefront, size: 16, color: AppTheme.donorGreen),
-                            const SizedBox(width: 6),
-                            const Text(
-                              'Market Review:',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.donorGreen,
-                              ),
-                            ),
-                            if (feedback.marketRating != null) ...[
-                              const SizedBox(width: 8),
-                              Row(
-                                children: List.generate(5, (index) {
-                                  return Icon(
-                                    index < feedback.marketRating! 
-                                        ? Icons.star 
-                                        : Icons.star_border,
-                                    color: Colors.amber,
-                                    size: 12,
-                                  );
-                                }),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          marketReview,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: AppTheme.textDarkGray,
-                          ),
-                        ),
-                      ],
-                    ),
+                Text(
+                  comment,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: AppTheme.textDarkGray,
                   ),
-                  if (donorReview.isNotEmpty || foodReview.isNotEmpty)
-                    const SizedBox(height: 12),
-                ],
-                if (donorReview.isNotEmpty) ...[
-                  Text(
-                    'Donor Review:',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    donorReview,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: AppTheme.textDarkGray,
-                    ),
-                  ),
-                  if (foodReview.isNotEmpty) const SizedBox(height: 12),
-                ],
-                if (foodReview.isNotEmpty) ...[
-                  Text(
-                    'Food Review:',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    foodReview,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: AppTheme.textDarkGray,
-                    ),
-                  ),
-                ],
+                ),
               ],
               const SizedBox(height: 8),
               Container(

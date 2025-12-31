@@ -864,10 +864,10 @@ class _MapScreenState extends State<MapScreen> {
         final marketName = data['marketName'] ?? 'Market';
         final marketAddress = data['marketAddress'] ?? '';
         final donorEmail = data['email'] ?? '';
-        // Fetch actual name: name field -> displayName -> email prefix -> default
-        final donorName = data['name'] ?? 
-            data['displayName'] ?? 
-            (donorEmail.isNotEmpty ? donorEmail.split('@')[0] : 'Donor');
+        // Use marketName instead of displayName for donor name
+        final donorName = marketName.isNotEmpty 
+            ? marketName
+            : (data['name'] ?? data['displayName'] ?? (donorEmail.isNotEmpty ? donorEmail.split('@')[0] : 'Donor'));
         final phoneNumber = data['phoneNumber'] ?? 'Not provided';
         final marketHours = data['marketHours'] ?? 'Not specified';
         final marketDescription = data['marketDescription'] ?? 'Fresh food market';

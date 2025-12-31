@@ -185,6 +185,39 @@ class MessagingService {
     );
   }
 
+  // Delete chat and all messages (both users can delete their chat history)
+  Future<void> deleteChat(String chatId) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+
+      // Get all messages in the chat
+      final messagesSnapshot = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .get();
+
+      // Delete all messages in a batch
+      final batch = _firestore.batch();
+      for (final doc in messagesSnapshot.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // Update chat document to clear messages
+      batch.update(_firestore.collection('chats').doc(chatId), {
+        'lastMessage': 'No messages',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageSenderId': null,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      await batch.commit();
+    } catch (e) {
+      throw Exception('Failed to delete chat: $e');
+    }
+  }
+
   // Delete a message (only sender can delete their own messages)
   Future<void> deleteMessage(String chatId, String messageId) async {
     try {

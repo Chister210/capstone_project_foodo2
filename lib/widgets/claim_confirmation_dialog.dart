@@ -79,7 +79,7 @@ class ClaimConfirmationDialog extends StatelessWidget {
                 
                 // Title
                 const Text(
-                  'Donation Claimed! ✅',
+                  'Donation Claimed!',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,

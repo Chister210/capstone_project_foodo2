@@ -18,6 +18,7 @@ class DonationService {
     required String description,
     required File imageFile,
     required DateTime pickupTime,
+    DateTime? expirationDateTime,
     required String deliveryType,
     String? address,
     GeoPoint? marketLocation,
@@ -52,6 +53,7 @@ class DonationService {
         description: description,
         imageUrl: imageBase64, // Store as base64 string
         pickupTime: pickupTime,
+        expirationDateTime: expirationDateTime,
         deliveryType: deliveryType,
         status: 'available',
         createdAt: DateTime.now(),
@@ -85,7 +87,13 @@ class DonationService {
             .where((doc) => (doc.data()['fcmToken'] ?? '').toString().isNotEmpty)
             .map((doc) => doc.id)
             .toList();
-        final donorName = user.displayName ?? user.email?.split('@')[0] ?? 'Donor';
+        // Get market name for donor (prefer marketName over displayName)
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        String donorName = 'Donor';
+        if (userDoc.exists) {
+          final userData = userDoc.data()!;
+          donorName = userData['marketName'] ?? userData['displayName'] ?? user.email?.split('@')[0] ?? 'Donor';
+        }
         
         print('Found ${receiverIds.length} receivers with FCM tokens');
         print('Receiver IDs: $receiverIds');
@@ -95,7 +103,7 @@ class DonationService {
             await AppNotification.send(
               AppNotification(
                 userId: receiverId,
-                title: 'New Donation Available! 🍽️',
+                title: 'New Donation Available!',
                 message: '$donorName has posted: "$title"',
                 type: 'new_donation',
                 data: {
@@ -168,7 +176,15 @@ class DonationService {
           }
           
           // Filter and sort
+          final now = DateTime.now();
           final filtered = allDonations.values.where((donation) {
+            // Filter out expired donations
+            if (donation.expirationDateTime != null) {
+              if (now.isAfter(donation.expirationDateTime!)) {
+                return false; // Donation has expired
+              }
+            }
+            
             // Show if status is available
             if (donation.status == 'available') return true;
             
@@ -224,7 +240,7 @@ class DonationService {
       await AppNotification.send(
         AppNotification(
           userId: receiverId,
-          title: 'Donation Updated 🔄',
+          title: 'Donation Updated',
           message: 'The donation "$title" has been updated by the donor. Please check the details.',
           type: 'donation_updated',
           data: {
@@ -306,12 +322,12 @@ class DonationService {
       final receiverData = receiverDoc.data()!;
       final receiverName = receiverData['displayName'] ?? receiverData['email']?.split('@')[0] ?? 'Receiver';
       
-      // Get donor details
+      // Get donor details (use marketName instead of displayName)
       final donorDoc = await _firestore.collection('users').doc(donation.donorId).get();
       if (!donorDoc.exists) throw Exception('Donor not found');
       
       final donorData = donorDoc.data()!;
-      final donorName = donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+      final donorName = donorData['marketName'] ?? donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
       
       // Calculate new quantities
       final currentClaimedQuantity = donation.claimedQuantity;
@@ -403,7 +419,7 @@ class DonationService {
       await AppNotification.send(
         AppNotification(
           userId: donation.donorId,
-          title: 'Donation Claimed! ✅',
+          title: 'Donation Claimed!',
           message: '$receiverName claimed $quantityText of "${donation.title}"$remainingText',
           type: 'donation_claimed',
           data: {
@@ -442,7 +458,7 @@ class DonationService {
           await AppNotification.send(
             AppNotification(
               userId: donation.claimedBy!,
-              title: 'Your Portion Completed! ✅',
+              title: 'Your Portion Completed!',
               message: 'Your portion of "${donation.title}" has been completed. The donation still has $remainingQty remaining.',
               type: 'donation_completed',
               data: {
@@ -483,7 +499,7 @@ class DonationService {
       await AppNotification.send(
         AppNotification(
           userId: donation.donorId,
-          title: 'Donation Completed! 🎉',
+          title: 'Donation Completed!',
           message: 'Your donation "${donation.title}" is completed. You earned $pointsAwarded points!',
           type: 'donation_completed',
           data: {
@@ -504,7 +520,7 @@ class DonationService {
           await AppNotification.send(
             AppNotification(
               userId: receiverId,
-              title: 'Donation Completed! ✅',
+              title: 'Donation Completed!',
               message: 'The donation "${donation.title}" has been fully completed.',
               type: 'donation_completed',
               data: {
@@ -705,6 +721,222 @@ class DonationService {
       }
     } catch (e) {
       throw Exception('Failed to refresh donation: $e');
+    }
+  }
+
+  // Receiver confirms they received the donation
+  Future<void> confirmDonationReceived(String donationId, String receiverId) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+      if (user.uid != receiverId) throw Exception('Only the receiver can confirm the donation');
+
+      final donationDoc = await _firestore.collection('donations').doc(donationId).get();
+      if (!donationDoc.exists) {
+        throw Exception('Donation not found');
+      }
+
+      final donation = DonationModel.fromFirestore(donationDoc);
+      
+      // Check if this receiver has claimed the donation
+      final isClaimedByReceiver = donation.claimedBy == receiverId || 
+                                   (donation.quantityClaims?.containsKey(receiverId) ?? false);
+      
+      if (!isClaimedByReceiver) {
+        throw Exception('You have not claimed this donation');
+      }
+
+      // Check if already confirmed for this receiver
+      final currentReceiverConfirmations = Map<String, bool>.from(
+        donation.receiverConfirmations ?? {}
+      );
+      
+      if (currentReceiverConfirmations[receiverId] == true) {
+        throw Exception('You have already confirmed this donation');
+      }
+
+      // Update donation with receiver confirmation for this specific receiver
+      currentReceiverConfirmations[receiverId] = true;
+      
+      final currentReceiverConfirmedAt = Map<String, Timestamp>.from(
+        (donation.receiverConfirmedAt ?? {}).map((k, v) => MapEntry(k, v is Timestamp ? v : Timestamp.fromDate(v)))
+      );
+      currentReceiverConfirmedAt[receiverId] = Timestamp.now();
+      
+      await _firestore.collection('donations').doc(donationId).update({
+        'receiverConfirmations': currentReceiverConfirmations,
+        'receiverConfirmedAt': currentReceiverConfirmedAt.map((k, v) => MapEntry(k, v)),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Get donor info for notification (use marketName instead of displayName)
+      final donorDoc = await _firestore.collection('users').doc(donation.donorId).get();
+      String donorName = 'Donor';
+      if (donorDoc.exists) {
+        final donorData = donorDoc.data()!;
+        donorName = donorData['marketName'] ?? donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+      }
+
+      // Get receiver info
+      final receiverDoc = await _firestore.collection('users').doc(receiverId).get();
+      String receiverName = 'Receiver';
+      if (receiverDoc.exists) {
+        final receiverData = receiverDoc.data()!;
+        receiverName = receiverData['displayName'] ?? receiverData['email']?.split('@')[0] ?? 'Receiver';
+      }
+
+      // Notify donor that receiver confirmed
+      await AppNotification.send(
+        AppNotification(
+          userId: donation.donorId,
+          title: 'Receiver Confirmed Donation',
+          message: '$receiverName confirmed they received "${donation.title}". Please confirm to complete the donation.',
+          type: 'receiver_confirmed',
+          data: {
+            'donationId': donationId,
+            'receiverId': receiverId,
+            'receiverName': receiverName,
+            'chatId': donation.chatId,
+          },
+        ),
+      );
+
+      print('✅ Receiver $receiverId confirmed the donation $donationId');
+    } catch (e) {
+      print('Error confirming donation: $e');
+      throw Exception('Failed to confirm donation: $e');
+    }
+  }
+
+  // Donor confirms the donation was completed for a specific receiver
+  Future<void> confirmDonationCompleted(String donationId, String donorId, String receiverId) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) throw Exception('User not authenticated');
+      if (user.uid != donorId) throw Exception('Only the donor can confirm completion');
+
+      final donationDoc = await _firestore.collection('donations').doc(donationId).get();
+      if (!donationDoc.exists) {
+        throw Exception('Donation not found');
+      }
+
+      final donation = DonationModel.fromFirestore(donationDoc);
+      
+      if (donation.donorId != donorId) {
+        throw Exception('You are not the donor of this donation');
+      }
+
+      // Check if this receiver has claimed the donation
+      final isClaimedByReceiver = donation.claimedBy == receiverId || 
+                                   (donation.quantityClaims?.containsKey(receiverId) ?? false);
+      
+      if (!isClaimedByReceiver) {
+        throw Exception('This receiver has not claimed this donation');
+      }
+
+      // Check if receiver has confirmed first for this transaction
+      final receiverConfirmations = donation.receiverConfirmations ?? {};
+      if (receiverConfirmations[receiverId] != true) {
+        throw Exception('Receiver has not confirmed the donation yet');
+      }
+
+      // Check if already confirmed for this receiver
+      final donorConfirmations = donation.donorConfirmations ?? {};
+      if (donorConfirmations[receiverId] == true) {
+        throw Exception('You have already confirmed completion for this receiver');
+      }
+
+      // Update donation with donor confirmation for this specific receiver
+      final updatedDonorConfirmations = Map<String, bool>.from(donorConfirmations);
+      updatedDonorConfirmations[receiverId] = true;
+      
+      final updatedDonorConfirmedAt = Map<String, Timestamp>.from(
+        (donation.donorConfirmedAt ?? {}).map((k, v) => MapEntry(k, v is Timestamp ? v : Timestamp.fromDate(v)))
+      );
+      updatedDonorConfirmedAt[receiverId] = Timestamp.now();
+      
+      // Check if all claimed quantities are confirmed
+      final quantityClaims = donation.quantityClaims ?? {};
+      final allReceiversConfirmed = quantityClaims.keys.every((receiverIdKey) {
+        return receiverConfirmations[receiverIdKey] == true && updatedDonorConfirmations[receiverIdKey] == true;
+      });
+      
+      // Also check if single claim (claimedBy) is confirmed
+      final singleClaimConfirmed = donation.claimedBy == receiverId && 
+                                   receiverConfirmations[receiverId] == true && 
+                                   updatedDonorConfirmations[receiverId] == true;
+      
+      // Mark as completed only if all claimed transactions are confirmed
+      final shouldMarkCompleted = allReceiversConfirmed || (singleClaimConfirmed && quantityClaims.isEmpty);
+      
+      await _firestore.collection('donations').doc(donationId).update({
+        'donorConfirmations': updatedDonorConfirmations,
+        'donorConfirmedAt': updatedDonorConfirmedAt.map((k, v) => MapEntry(k, v)),
+        if (shouldMarkCompleted) 'status': 'completed',
+        if (shouldMarkCompleted) 'completedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Award points to donor (10 points per successful transaction)
+      await _awardPointsToDonor(donorId, 10);
+
+      // Get donor info (use marketName instead of displayName)
+      final donorDoc = await _firestore.collection('users').doc(donorId).get();
+      String donorName = 'Donor';
+      if (donorDoc.exists) {
+        final donorData = donorDoc.data()!;
+        donorName = donorData['marketName'] ?? donorData['displayName'] ?? donorData['email']?.split('@')[0] ?? 'Donor';
+      }
+
+      // Get receiver info
+      String receiverName = 'Receiver';
+      final receiverDoc = await _firestore.collection('users').doc(receiverId).get();
+      if (receiverDoc.exists) {
+        final receiverData = receiverDoc.data()!;
+        receiverName = receiverData['displayName'] ?? receiverData['email']?.split('@')[0] ?? 'Receiver';
+      }
+
+      // Get chatId for this specific receiver-donor pair
+      final expectedChatId = '${donorId}_${receiverId}_$donationId';
+      final chatDoc = await _firestore.collection('chats').doc(expectedChatId).get();
+      final chatId = chatDoc.exists ? expectedChatId : donation.chatId;
+
+      // Notify receiver of successful donation
+      await AppNotification.send(
+        AppNotification(
+          userId: receiverId,
+          title: 'Donation Successful!',
+          message: 'The donation "${donation.title}" has been successfully completed. Thank you for using Foodo!',
+          type: 'donation_completed',
+          data: {
+            'donationId': donationId,
+            'donorId': donorId,
+            'donorName': donorName,
+            'chatId': chatId,
+          },
+        ),
+      );
+
+      // Notify donor of successful completion for this transaction
+      await AppNotification.send(
+        AppNotification(
+          userId: donorId,
+          title: 'Transaction Completed!',
+          message: 'Your transaction with $receiverName for "${donation.title}" is completed. You earned 10 points!',
+          type: 'donation_completed',
+          data: {
+            'donationId': donationId,
+            'receiverId': receiverId,
+            'points': 10,
+            'chatId': chatId,
+          },
+        ),
+      );
+
+      print('✅ Donor $donorId confirmed completion of donation $donationId for receiver $receiverId');
+    } catch (e) {
+      print('Error confirming donation completion: $e');
+      throw Exception('Failed to confirm completion: $e');
     }
   }
 }

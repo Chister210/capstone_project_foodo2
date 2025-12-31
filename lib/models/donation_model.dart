@@ -8,6 +8,7 @@ class DonationModel {
   final String description;
   final String imageUrl;
   final DateTime pickupTime;
+  final DateTime? expirationDateTime; // Date and time when donation expires (can no longer be claimed)
   final String deliveryType; // 'pickup' or 'delivery'
   final String status; // 'available', 'claimed', 'in_progress', 'completed', 'expired'
   final String? claimedBy;
@@ -38,6 +39,12 @@ class DonationModel {
   final bool receiverNotified; // Whether receiver was notified about completion
   final Map<String, dynamic>? trackingData; // Additional tracking information
   
+  // Confirmation fields for donation completion (per receiver)
+  final Map<String, bool>? receiverConfirmations; // Map of receiverId -> whether they confirmed the donation
+  final Map<String, bool>? donorConfirmations; // Map of receiverId -> whether donor confirmed for that receiver
+  final Map<String, DateTime>? receiverConfirmedAt; // Map of receiverId -> when they confirmed
+  final Map<String, DateTime>? donorConfirmedAt; // Map of receiverId -> when donor confirmed for that receiver
+  
 
   DonationModel({
     required this.id,
@@ -47,6 +54,7 @@ class DonationModel {
     required this.description,
     required this.imageUrl,
     required this.pickupTime,
+    this.expirationDateTime,
     required this.deliveryType,
     required this.status,
     this.claimedBy,
@@ -74,6 +82,10 @@ class DonationModel {
     this.donorNotified = false,
     this.receiverNotified = false,
     this.trackingData,
+    this.receiverConfirmations,
+    this.donorConfirmations,
+    this.receiverConfirmedAt,
+    this.donorConfirmedAt,
   });
 
   // Add the hasImage getter
@@ -81,6 +93,45 @@ class DonationModel {
 
   // Helper getter for allergens that ensures non-null list
   List<String> get allergensList => allergens ?? [];
+
+  // Helper method to parse boolean maps (handles both old single bool and new Map format)
+  static Map<String, bool>? _parseBooleanMap(dynamic boolData) {
+    if (boolData == null) return null;
+    
+    // If it's a Map (new format)
+    if (boolData is Map) {
+      return Map<String, bool>.from(boolData.map((k, v) => MapEntry(k.toString(), v == true)));
+    }
+    
+    // If it's a single bool (old format - backward compatibility)
+    if (boolData is bool) {
+      // Return null for old format (we can't determine which receiver)
+      return null;
+    }
+    
+    return null;
+  }
+
+  // Helper method to parse timestamp maps (handles both old single Timestamp and new Map format)
+  static Map<String, DateTime>? _parseTimestampMap(dynamic timestampData) {
+    if (timestampData == null) return null;
+    
+    // If it's a Map (new format)
+    if (timestampData is Map) {
+      return Map<String, DateTime>.from(timestampData.map((k, v) => MapEntry(
+        k.toString(),
+        v is Timestamp ? v.toDate() : (v is DateTime ? v : DateTime.now())
+      )));
+    }
+    
+    // If it's a single Timestamp (old format - backward compatibility)
+    if (timestampData is Timestamp) {
+      // Return null for old format (we can't determine which receiver)
+      return null;
+    }
+    
+    return null;
+  }
 
   factory DonationModel.fromFirestore(DocumentSnapshot doc) {
     Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
@@ -141,6 +192,14 @@ class DonationModel {
       donorNotified: data['donorNotified'] ?? false,
       receiverNotified: data['receiverNotified'] ?? false,
       trackingData: data['trackingData'],
+      receiverConfirmations: _parseBooleanMap(data['receiverConfirmations']),
+      donorConfirmations: _parseBooleanMap(data['donorConfirmations']),
+      receiverConfirmedAt: data['receiverConfirmedAt'] != null
+          ? _parseTimestampMap(data['receiverConfirmedAt'])
+          : null,
+      donorConfirmedAt: data['donorConfirmedAt'] != null
+          ? _parseTimestampMap(data['donorConfirmedAt'])
+          : null,
     );
   }
 
@@ -152,6 +211,7 @@ class DonationModel {
       'description': description,
       'imageUrl': imageUrl,
       'pickupTime': Timestamp.fromDate(pickupTime),
+      'expirationDateTime': expirationDateTime != null ? Timestamp.fromDate(expirationDateTime!) : null,
       'deliveryType': deliveryType,
       'status': status,
       'claimedBy': claimedBy,
@@ -179,6 +239,14 @@ class DonationModel {
       'donorNotified': donorNotified,
       'receiverNotified': receiverNotified,
       'trackingData': trackingData,
+      'receiverConfirmations': receiverConfirmations,
+      'donorConfirmations': donorConfirmations,
+      'receiverConfirmedAt': receiverConfirmedAt != null
+          ? Map<String, Timestamp>.from(receiverConfirmedAt!.map((k, v) => MapEntry(k, Timestamp.fromDate(v))))
+          : null,
+      'donorConfirmedAt': donorConfirmedAt != null
+          ? Map<String, Timestamp>.from(donorConfirmedAt!.map((k, v) => MapEntry(k, Timestamp.fromDate(v))))
+          : null,
     };
   }
 
@@ -190,6 +258,7 @@ class DonationModel {
     String? description,
     String? imageUrl,
     DateTime? pickupTime,
+    DateTime? expirationDateTime,
     String? deliveryType,
     String? status,
     String? claimedBy,
@@ -214,6 +283,10 @@ class DonationModel {
     bool? donorNotified,
     bool? receiverNotified,
     Map<String, dynamic>? trackingData,
+    Map<String, bool>? receiverConfirmations,
+    Map<String, bool>? donorConfirmations,
+    Map<String, DateTime>? receiverConfirmedAt,
+    Map<String, DateTime>? donorConfirmedAt,
   }) {
     return DonationModel(
       id: id ?? this.id,
@@ -223,6 +296,7 @@ class DonationModel {
       description: description ?? this.description,
       imageUrl: imageUrl ?? this.imageUrl,
       pickupTime: pickupTime ?? this.pickupTime,
+      expirationDateTime: expirationDateTime ?? this.expirationDateTime,
       deliveryType: deliveryType ?? this.deliveryType,
       status: status ?? this.status,
       claimedBy: claimedBy ?? this.claimedBy,
@@ -247,6 +321,10 @@ class DonationModel {
       donorNotified: donorNotified ?? this.donorNotified,
       receiverNotified: receiverNotified ?? this.receiverNotified,
       trackingData: trackingData ?? this.trackingData,
+      receiverConfirmations: receiverConfirmations ?? this.receiverConfirmations,
+      donorConfirmations: donorConfirmations ?? this.donorConfirmations,
+      receiverConfirmedAt: receiverConfirmedAt ?? this.receiverConfirmedAt,
+      donorConfirmedAt: donorConfirmedAt ?? this.donorConfirmedAt,
     );
   }
   
